@@ -158,6 +158,11 @@ class TestStructuralMutations(unittest.TestCase):
         "regex préfixe invalide": lambda r: r["interpretations"]["INT-EMAIL"]["params"].update(
             env_prefix_pattern="(["),
         "version": lambda r: r.update(version=2),
+        "seuil d'appariement": lambda r: r["assignment_matching"].update(cross_type_min_score=1.5),
+        "similarité vide": lambda r: r["assignment_matching"].update(similarity_fields=[]),
+        "similarité kind": lambda r: r["assignment_matching"]["similarity_fields"][0].update(kind="x"),
+        "criticité absence": lambda r: r["assignment_matching"]["missing_in_target"].update(criticality=0),
+        "section appariement": lambda r: r.pop("assignment_matching"),
     }
 
     def test_mutations_rejected(self):
@@ -206,6 +211,11 @@ class TestAgainstData(unittest.TestCase):
     def test_detects_unknown_source_label(self):
         errs = self._errors_after(lambda r: r["source_label_aliases"].pop("EMPT_CD"))
         self.assertTrue(any("EMPT_CD" in e for e in errs), errs)
+
+    def test_detects_bad_similarity_column(self):
+        errs = self._errors_after(
+            lambda r: r["assignment_matching"]["similarity_fields"][0].update(target="jobId"))
+        self.assertTrue(any("jobId" in e for e in errs), errs)
 
     def test_detects_bad_join_column(self):
         errs = self._errors_after(

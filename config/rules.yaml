@@ -119,6 +119,10 @@ interpretations:
       La feuille « Jointure - Motif des situations » identifie explicitement
       CodeSuspensionAccès comme le code de traitement des accès, qui est la clé
       de la feuille « Règles situation d'emploi ».
+    params:
+      columns:
+        code_suspension_acces: CodeSuspensionAccès
+        code_statut_emploi: CodeStatutEmploi
 
   INT-SITUATION-UNLISTED:
     choice: indetermine
@@ -191,6 +195,35 @@ assignment_types:
   P: {isPrimaryAssignment: true,  isTemporaryAssignment: false, label: "Principale"}
   A: {isPrimaryAssignment: false, isTemporaryAssignment: true,  label: "Temporaire"}
   S: {isPrimaryAssignment: false, isTemporaryAssignment: false, label: "Secondaire"}
+
+# -----------------------------------------------------------------------------
+# Appariement des affectations (source ↔ cible)
+#   1. par employé (Matricule ↔ personId) ;
+#   2. par type d'affectation (TypeAffectation ↔ indicateurs primaire/temporaire) ;
+#   3. à type égal et plusieurs candidats, affectation optimale sur la similarité
+#      des champs ci-dessous (jamais sur l'ordre des lignes) ;
+#   4. les restes d'un même employé sont appariés entre types différents si la
+#      similarité atteint cross_type_min_score (écart de type signalé), sinon
+#      ils sont déclarés absents.
+# -----------------------------------------------------------------------------
+assignment_matching:
+  similarity_fields:
+    - {source: CodeEmploi,       target: positionId,          kind: code}
+    - {source: CodeDirection,    target: divisionId,          kind: code}
+    - {source: CodeImputation,   target: divisionCode,        kind: code}
+    - {source: CodeSite,         target: siteCode,            kind: code}
+    - {source: ÉchelleSalariale, target: payGradeId,          kind: code}
+    - {source: DateEntréePoste,  target: assignmentStartDate, kind: date}
+    - {source: HeuresNormeHebdo, target: weeklyHoursOverride, kind: number}
+  cross_type_min_score: 0.6
+  missing_in_target:
+    rule_id: R-MATCH
+    criticality: 5
+    criticality_reason: Une affectation absente du système Temps empêche la planification et la saisie du temps.
+  missing_in_source:
+    rule_id: R-MATCH
+    criticality: 4
+    criticality_reason: Une affectation inconnue du système maître RH ne devrait pas exister dans le système Temps.
 
 # -----------------------------------------------------------------------------
 # Champs corroborés

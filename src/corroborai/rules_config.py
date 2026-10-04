@@ -165,6 +165,28 @@ class SupportColumn:
 
 
 @dataclass(frozen=True)
+class SimilarityField:
+    source: str
+    target: str
+    kind: FieldKind
+
+
+@dataclass(frozen=True)
+class MissingPolicy:
+    rule_id: str
+    criticality: int
+    criticality_reason: str
+
+
+@dataclass(frozen=True)
+class AssignmentMatching:
+    similarity_fields: tuple[SimilarityField, ...]
+    cross_type_min_score: float
+    missing_in_target: MissingPolicy
+    missing_in_source: MissingPolicy
+
+
+@dataclass(frozen=True)
 class RulesConfig:
     version: int
     fields: tuple[FieldRule, ...]
@@ -177,6 +199,7 @@ class RulesConfig:
     excluded: tuple[ExcludedRow, ...]
     support_columns: tuple[SupportColumn, ...]
     unmapped_target_notes: dict[str, str]
+    matching: AssignmentMatching
     path: Path | None = None
 
     def field(self, target: str) -> FieldRule:
@@ -302,6 +325,26 @@ def _build(raw: dict[str, Any], path: Path) -> RulesConfig:
         for i, s in enumerate(raw.get("support_columns") or [])
     )
 
+    am = raw.get("assignment_matching") or {}
+    try:
+        sim = tuple(SimilarityField(str(_req(f, "source", "similarity_fields")),
+                                    str(_req(f, "target", "similarity_fields")),
+                                    FieldKind(_req(f, "kind", "similarity_fields")))
+                    for f in am.get("similarity_fields") or [])
+    except ValueError as exc:
+        raise RulesConfigError(f"assignment_matching.similarity_fields : {exc}") from exc
+
+    def policy(key: str) -> MissingPolicy:
+        spec = am.get(key) or {}
+        ctx = f"assignment_matching.{key}"
+        return MissingPolicy(str(_req(spec, "rule_id", ctx)), _req(spec, "criticality", ctx),
+                             str(_req(spec, "criticality_reason", ctx)))
+
+    if not am:
+        raise RulesConfigError("section assignment_matching manquante")
+    matching = AssignmentMatching(sim, _req(am, "cross_type_min_score", "assignment_matching"),
+                                  policy("missing_in_target"), policy("missing_in_source"))
+
     return RulesConfig(
         version=raw.get("version"),
         fields=tuple(fields),
@@ -314,6 +357,7 @@ def _build(raw: dict[str, Any], path: Path) -> RulesConfig:
         excluded=excluded,
         support_columns=support,
         unmapped_target_notes=dict(raw.get("unmapped_target_notes") or {}),
+        matching=matching,
         path=path,
     )
 
@@ -393,6 +437,15 @@ def _validate_structure(cfg: RulesConfig) -> None:
         elif missing := keys - set(cfg.joins[name].columns):
             errors.append(f"jointure {name} : colonnes manquantes {sorted(missing)}")
 
+    m = cfg.matching
+    if not m.similarity_fields:
+        errors.append("assignment_matching : aucun champ de similarité")
+    if not isinstance(m.cross_type_min_score, (int, float)) or not 0 < m.cross_type_min_score <= 1:
+        errors.append("assignment_matching : cross_type_min_score doit être dans ]0, 1]")
+    for name, p in (("missing_in_target", m.missing_in_target), ("missing_in_source", m.missing_in_source)):
+        if not isinstance(p.criticality, int) or isinstance(p.criticality, bool) or not 1 <= p.criticality <= 5:
+            errors.append(f"assignment_matching.{name} : criticité hors de 1–5")
+
     if errors:
         raise RulesConfigError("rules.yaml invalide :\n  - " + "\n  - ".join(errors))
 
@@ -462,6 +515,12 @@ def validate_against_data(cfg: RulesConfig, bundle: DataBundle) -> ValidationRes
         for col in ct.when:
             if col not in src_cols:
                 res.errors.append(f"contract_types {ct.code} : colonne source absente « {col} »")
+
+    for sf in cfg.matching.similarity_fields:
+        if sf.source not in src_cols:
+            res.errors.append(f"similarité : colonne source absente « {sf.source} »")
+        if sf.target not in tgt_cols:
+            res.errors.append(f"similarité : colonne cible absente « {sf.target} »")
 
     # Jointures
     for name, join in cfg.joins.items():

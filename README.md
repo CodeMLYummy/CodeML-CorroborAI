@@ -22,10 +22,31 @@ Les noms sont résolus de façon tolérante (accents, apostrophes, NFC/NFD) ; en
 cas de renommage, c'est l'empreinte qui fait foi.
 
 ```bash
+corroborai run --data-dir data --out out        # corroboration complète + rapport
+corroborai run --data-dir data --out out \
+    --interpretation INT-ASSIGN-DATES=strict_literal   # forcer une interprétation alternative
 corroborai check --data-dir data      # intégrité des fichiers + validation des règles
 corroborai rules                      # liste des champs corroborés
 corroborai rules --markdown -o docs/REGLES.md   # régénère la documentation des règles
 ```
+
+## Rapport
+
+`corroborai run` produit `out/rapport_corroboration.xlsx` et `out/verdicts.csv` :
+
+| Feuille | Contenu |
+|---|---|
+| Synthèse | exécution, intégrité avant/après, décomptes (formules sur « Détail ») |
+| À investiguer | anomalies et indéterminés, triés par criticité puis confiance |
+| Écarts justifiés / Conformes | verdicts par catégorie |
+| Détail | tous les verdicts : valeurs source / attendue / cible, règle, référence Mapping.xlsx, preuves (table:ligne), paramètres |
+| Affectations | appariement source ↔ cible (méthode, similarité) |
+| Interprétations | taux d'accord avec la cible de chaque interprétation, par champ, et justification des choix |
+| Intégrité | empreintes SHA-256 avant et après traitement |
+
+Chaque verdict est produit par une règle déterministe (`REGLE_DETERMINISTE`).
+Un champ dont le verdict changerait sous une interprétation alternative voit
+sa confiance abaissée à `MOYENNE` et le verdict alternatif est tracé.
 
 ## Règles métier
 
@@ -64,6 +85,10 @@ src/corroborai/models.py    modèle Finding / Verdict / Evidence
 src/corroborai/io/          chargement en lecture seule, intégrité, normalisation
 src/corroborai/rules_config.py   chargement et validation de rules.yaml
 src/corroborai/rules_doc.py      génération de docs/REGLES.md
+src/corroborai/matching.py       appariement des affectations
+src/corroborai/rules/            règles déterministes (dates, situation, courriel…)
+src/corroborai/engine.py         moteur de corroboration
+src/corroborai/report/           rapport Excel + CSV
 src/corroborai/cli.py       interface en ligne de commande
 tests/
 ```
@@ -72,7 +97,7 @@ tests/
 
 - [x] Étape 1 — squelette, modèle de données, chargement + intégrité, normalisation
 - [x] Étape 2 — règles codifiées (`config/rules.yaml`)
-- [ ] Étape 3 — appariement des affectations, moteur de règles, rapport Excel
+- [x] Étape 3 — appariement des affectations, moteur de règles, rapport Excel
 - [ ] Étape 4 — détection de motifs, moteur d'hypothèses, scoring
 - [ ] Étape 5 — harnais LLM (gabarit · Gemini · compatible OpenAI)
 - [ ] Étape 6 — interface Streamlit, rétroaction experte

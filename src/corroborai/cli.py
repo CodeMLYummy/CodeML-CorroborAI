@@ -65,6 +65,47 @@ def _cmd_rules(args: argparse.Namespace) -> int:
     return 0
 
 
+def _parse_overrides(items: list[str]) -> dict[str, str]:
+    out = {}
+    for item in items or []:
+        if "=" not in item:
+            raise ValueError(f"--interpretation attend ID=choix, reçu « {item} »")
+        k, v = item.split("=", 1)
+        out[k.strip()] = v.strip()
+    return out
+
+
+def _cmd_run(args: argparse.Namespace) -> int:
+    from corroborai.engine import corroborate
+    from corroborai.report import write_csv, write_report
+
+    try:
+        bundle = load_bundle(args.data_dir, args.config)
+        cfg = load_rules(args.rules)
+        res = validate_against_data(cfg, bundle)
+        if not res.ok:
+            for e in res.errors:
+                print(f"[ERREUR] {e}", file=sys.stderr)
+            return 2
+        result = corroborate(bundle, cfg, _parse_overrides(args.interpretation))
+    except (DataLoadError, RulesConfigError, ValueError) as exc:
+        print(f"ERREUR : {exc}", file=sys.stderr)
+        return 2
+
+    out = Path(args.out)
+    xlsx = write_report(result, out / "rapport_corroboration.xlsx")
+    csv_path = write_csv(result, out / "verdicts.csv")
+    counts = result.counts()
+    print(f"Corroboration terminée en {result.duration_s:.2f} s — {len(result.findings)} verdicts, "
+          f"{sum(p.matched for p in result.pairs)} affectations appariées sur {len(result.pairs)}")
+    for v in ("ANOMALIE", "INDETERMINE", "JUSTIFIE", "CONFORME"):
+        print(f"  {v:<12} {counts[v]:>4}")
+    print(f"Intégrité des fichiers sources après traitement : "
+          f"{'OK' if result.integrity_after.ok else 'ÉCHEC'}")
+    print(f"Rapport : {xlsx}\nCSV     : {csv_path}")
+    return 0 if result.integrity_after.ok and not result.errors else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="corroborai", description=__doc__)
     p.add_argument("--version", action="version", version=f"corroborai {__version__}")
@@ -77,6 +118,15 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument("--no-strict", action="store_true",
                        help="Continuer malgré un échec d'intégrité (déconseillé)")
     check.set_defaults(func=_cmd_check)
+
+    run = sub.add_parser("run", help="Exécute la corroboration et produit le rapport")
+    run.add_argument("--data-dir", type=Path, default=Path("data"))
+    run.add_argument("--out", type=Path, default=Path("out"), help="Répertoire de sortie")
+    run.add_argument("--config", type=Path, default=None, help="Chemin de datasets.yaml")
+    run.add_argument("--rules", type=Path, default=None, help="Chemin de rules.yaml")
+    run.add_argument("--interpretation", action="append", metavar="ID=CHOIX",
+                     help="Force une interprétation (ex. INT-ASSIGN-DATES=strict_literal)")
+    run.set_defaults(func=_cmd_run)
 
     rules = sub.add_parser("rules", help="Affiche ou documente les règles codifiées")
     rules.add_argument("--rules", type=Path, default=None, help="Chemin de rules.yaml")

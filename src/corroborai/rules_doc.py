@@ -60,6 +60,18 @@ def rules_markdown(cfg: RulesConfig) -> str:
         for c in j.columns.values():
             out.append(f"| {j.name} | {c.label} | `{c.table}` | {f'`{c.source}`' if c.source else '—'} |")
 
+    m = cfg.matching
+    out += ["", "## Appariement des affectations", "",
+            "Par employé, puis par type d'affectation ; à type égal, affectation optimale sur la "
+            "similarité des champs ci-dessous (jamais sur l'ordre des lignes). Les restes d'un même "
+            f"employé sont appariés entre types différents si la similarité atteint "
+            f"{m.cross_type_min_score:.0%} ; sinon l'affectation est déclarée absente "
+            f"(`{m.missing_in_target.rule_id}`, criticité {m.missing_in_target.criticality} si absente "
+            f"de la cible, {m.missing_in_source.criticality} si absente de la source).", "",
+            "| Colonne source | Champ cible | Type |", "|---|---|---|"]
+    for sf in m.similarity_fields:
+        out.append(f"| `{sf.source}` | `{sf.target}` | {sf.kind.value} |")
+
     out += ["", "## Lignes du mapping non corroborées", ""]
     for e in cfg.excluded:
         out.append(f"- `{e.source}` ({e.mapping_ref}) : {e.reason}")

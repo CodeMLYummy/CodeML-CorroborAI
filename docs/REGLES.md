@@ -167,6 +167,20 @@ Deux valeurs vides (après normalisation) sont conformes ; une seule valeur vide
 | motifs | Code de la situation d'emploi de Remphor | `CodeStatutSystèmeExterne` | — |
 | motifs | Code de traitement des accès | `CodeGestionAccès` | `CodeSuspensionAccès` |
 
+## Appariement des affectations
+
+Par employé, puis par type d'affectation ; à type égal, affectation optimale sur la similarité des champs ci-dessous (jamais sur l'ordre des lignes). Les restes d'un même employé sont appariés entre types différents si la similarité atteint 60% ; sinon l'affectation est déclarée absente (`R-MATCH`, criticité 5 si absente de la cible, 4 si absente de la source).
+
+| Colonne source | Champ cible | Type |
+|---|---|---|
+| `CodeEmploi` | `positionId` | code |
+| `CodeDirection` | `divisionId` | code |
+| `CodeImputation` | `divisionCode` | code |
+| `CodeSite` | `siteCode` | code |
+| `ÉchelleSalariale` | `payGradeId` | code |
+| `DateEntréePoste` | `assignmentStartDate` | date |
+| `HeuresNormeHebdo` | `weeklyHoursOverride` | number |
+
 ## Lignes du mapping non corroborées
 
 - `LibelléImputation` (Mapping!50) : Aucun champ cible (« - » dans Mapping.xlsx).
