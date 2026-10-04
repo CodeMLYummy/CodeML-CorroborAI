@@ -1,0 +1,38 @@
+# Registre des jeux de données d'entrée.
+# Les fichiers sont toujours lus en LECTURE SEULE et leur SHA-256 est vérifié
+# contre manifest.json avant tout traitement.
+#
+#   file             : nom attendu (tel qu'il apparaît dans manifest.json)
+#   sheet            : index ou nom de feuille ; null = toutes les feuilles
+#   packed_csv       : true si le fichier Excel contient un CSV « tassé » dans une seule colonne
+#   required_columns : colonnes dont l'absence rend le jeu inutilisable
+
+source:
+  file: Employe_Source_Anonymise_VF.xlsx
+  sheet: 0
+  required_columns: [Matricule, NomFamille, PrénomUsuel, TypeAffectation, CodePoste,
+                     CodeEmploi, CodeDirection, CatégorieEmploi, EstPermanent,
+                     EstTempsPlein, CodeRaisonStatut, CodeSuspensionAccès]
+
+target:
+  file: Employe_Destination_Anonymise_VF.xlsx
+  sheet: 0
+  required_columns: [personId, givenName, surname, contactEmail, isPrimaryAssignment,
+                     isTemporaryAssignment, positionId, divisionId]
+
+poste_detail:
+  file: détail_du_poste.xlsx
+  sheet: 0
+  packed_csv: true
+  required_columns: [IdentifiantPoste, IdentifiantEmploi, CodeDirectionAffectée,
+                     DateEffetAffectation]
+
+motifs:
+  file: Motif de la situation d'emploi.xlsx
+  sheet: 0
+  required_columns: [CodeCatégorieStatut, CodeStatutSystèmeExterne, CodeGestionAccès]
+
+mapping:
+  file: Mapping.xlsx
+  sheet: null
+  required_columns: []
