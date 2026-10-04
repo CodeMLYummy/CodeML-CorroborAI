@@ -16,17 +16,17 @@ from corroborai.models import ExplanationSource
 from corroborai.report import write_report
 from corroborai.rules_config import load_rules
 from tests._ai_helpers import ScriptedTransport, well_behaved_answer, user_text
-from tests._helpers import DATA_DIR, requires_data
+from tests._helpers import CHALLENGE_DIR, requires_challenge_data
 
 EXPECTED_EMPLOYEES = {"1545850", "2762457", "4625374", "3712987", "7254364", "3241002", "6035643",
                       "4402456", "9989151", "2911996", "7683990"}
 
 
-@requires_data
+@requires_challenge_data
 class TestTasks(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.bundle = load_bundle(DATA_DIR)
+        cls.bundle = load_bundle(CHALLENGE_DIR)
         cls.cfg = load_rules()
 
     def fresh(self):

@@ -16,16 +16,15 @@ from corroborai.engine import corroborate
 from corroborai.io.loaders import load_bundle
 from corroborai.report import write_csv, write_report
 from corroborai.rules_config import load_rules
-from tests._helpers import DATA_DIR, requires_data
+from tests._helpers import fixture_dir
 
 RECALC = Path("/mnt/skills/public/xlsx/scripts/recalc.py")
 
 
-@requires_data
 class TestReport(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.result = corroborate(load_bundle(DATA_DIR), load_rules(), strict=True)
+        cls.result = corroborate(load_bundle(fixture_dir("xlsx", "mismatch")), load_rules(), strict=True)
         cls.tmp = tempfile.TemporaryDirectory()
         cls.xlsx = write_report(cls.result, Path(cls.tmp.name) / "r.xlsx")
         cls.csv = write_csv(cls.result, Path(cls.tmp.name) / "v.csv")
@@ -61,6 +60,13 @@ class TestReport(unittest.TestCase):
         for h in ("Justification", "Cause probable", "Calcul de la priorité"):
             self.assertIn(h, headers)
 
+    def test_default_font_is_applied(self):
+        # La police par défaut repose sur un attribut interne d'openpyxl : on vérifie le résultat lu.
+        ws = self.wb["Détail"]
+        self.assertEqual((ws["B2"].font.name, ws["B2"].font.sz), ("Arial", 10))
+        self.assertEqual(ws["A1"].font.name, "Arial")
+        self.assertTrue(ws["A1"].font.b)
+
     def test_detail_columns_for_formulas(self):
         ws = self.wb["Détail"]
         self.assertEqual(ws["D1"].value, "Champ cible")
@@ -68,8 +74,13 @@ class TestReport(unittest.TestCase):
 
     def test_integrity_sheet(self):
         ws = self.wb["Intégrité"]
-        statuses = [r[4] for r in ws.iter_rows(min_row=2, values_only=True) if r[2] == "oui"]
-        self.assertTrue(statuses and all(s in ("OK", "OK_RENOMME") for s in statuses))
+        headers = [c.value for c in ws[1]]
+        rows = [dict(zip(headers, r)) for r in ws.iter_rows(min_row=2, values_only=True)]
+        required = [r for r in rows if r["Requis"] == "oui"]
+        self.assertEqual(len(required), 4)
+        self.assertTrue(all(r["Après traitement"] == "INCHANGE" for r in required))
+        self.assertTrue(all(r["Contrôle du manifeste"] == "DIFFERENT_DU_MANIFESTE" for r in required))
+        self.assertTrue(all(r["SHA-256 à la lecture"] == r["SHA-256 après traitement"] for r in required))
 
     def test_csv(self):
         raw = self.csv.read_bytes()
@@ -92,13 +103,12 @@ class TestReport(unittest.TestCase):
         self.assertEqual(values["Total"], len(self.result.findings))
 
 
-@requires_data
 class TestRunCli(unittest.TestCase):
     def test_run(self):
         with tempfile.TemporaryDirectory() as tmp:
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
-                code = main(["run", "--data-dir", str(DATA_DIR), "--out", tmp])
+                code = main(["run", "--data-dir", str(fixture_dir("csv")), "--out", tmp])
             self.assertEqual(code, 0)
             self.assertTrue((Path(tmp) / "rapport_corroboration.xlsx").is_file())
             self.assertTrue((Path(tmp) / "verdicts.csv").is_file())
@@ -107,10 +117,10 @@ class TestRunCli(unittest.TestCase):
     def test_run_with_override_and_bad_override(self):
         with tempfile.TemporaryDirectory() as tmp:
             with contextlib.redirect_stdout(io.StringIO()):
-                self.assertEqual(main(["run", "--data-dir", str(DATA_DIR), "--out", tmp,
+                self.assertEqual(main(["run", "--data-dir", str(fixture_dir("xlsx")), "--out", tmp,
                                        "--interpretation", "INT-ASSIGN-DATES=strict_literal"]), 0)
             with contextlib.redirect_stderr(io.StringIO()):
-                self.assertEqual(main(["run", "--data-dir", str(DATA_DIR), "--out", tmp,
+                self.assertEqual(main(["run", "--data-dir", str(fixture_dir("xlsx")), "--out", tmp,
                                        "--interpretation", "INT-ASSIGN-DATES"]), 2)
 
 

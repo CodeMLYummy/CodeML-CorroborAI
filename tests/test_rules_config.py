@@ -24,7 +24,7 @@ from corroborai.rules_config import (
     load_rules,
     validate_against_data,
 )
-from tests._helpers import DATA_DIR, requires_data
+from tests._helpers import CHALLENGE_DIR, requires_challenge_data
 
 RAW = yaml.safe_load(DEFAULT_RULES.read_text(encoding="utf-8"))
 
@@ -171,11 +171,11 @@ class TestStructuralMutations(unittest.TestCase):
                 load_mutated(mutate)
 
 
-@requires_data
+@requires_challenge_data
 class TestAgainstData(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.bundle = load_bundle(DATA_DIR)
+        cls.bundle = load_bundle(CHALLENGE_DIR)
         cls.cfg = load_rules()
 
     def test_config_consistent_with_data(self):

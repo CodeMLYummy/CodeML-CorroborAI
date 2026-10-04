@@ -1,31 +1,40 @@
-"""Chargement des jeux de données en lecture seule, avec contrôle d'intégrité.
+"""Chargement des jeux de données en lecture seule.
 
-Garanties :
+Deux garanties distinctes :
 
-* chaque fichier est lu **une seule fois en octets** ; l'empreinte SHA-256 est
-  calculée sur exactement les octets qui sont ensuite analysés ;
-* aucune écriture n'est jamais faite dans le répertoire de données ;
-* l'empreinte est comparée à ``manifest.json`` ; un fichier requis altéré
-  interrompt le traitement (mode strict) ;
-* les noms de fichiers sont résolus de façon tolérante (accents, espaces,
-  apostrophes, forme Unicode NFC/NFD) car les copies distribuées peuvent avoir
-  été renommées — l'empreinte reste l'autorité ;
-* chaque ligne chargée porte ``_row`` (numéro de ligne Excel d'origine) pour
-  la traçabilité des preuves.
+1. **Les fichiers d'origine ne sont jamais modifiés** (exigence des consignes).
+   Chaque fichier est lu une seule fois en octets ; son empreinte SHA-256 est
+   calculée sur exactement les octets analysés, puis recalculée en fin de
+   traitement (:meth:`DataBundle.verify_unchanged`) : c'est la preuve que le
+   traitement n'a rien altéré. Aucune écriture n'est faite dans le répertoire
+   de données.
+
+2. **Les fichiers sont ceux qui ont été distribués** — vérification
+   *informative* : si un ``manifest.json`` est présent, chaque empreinte y est
+   comparée. Un écart (ex. un jeu de test plus volumineux portant les mêmes
+   noms) est signalé, sans bloquer. Le mode ``strict_manifest`` l'exige.
+
+Formats acceptés : Excel (``.xlsx``, ``.xlsm``) et CSV (séparateur et
+encodage détectés). Un fichier déclaré ``X.xlsx`` est aussi trouvé sous le nom
+``X.csv``. Les noms sont résolus de façon tolérante (accents, espaces,
+apostrophes, forme Unicode NFC/NFD).
+
+Chaque ligne chargée porte ``_row`` (numéro de ligne d'origine, en-tête = 1)
+pour la traçabilité des preuves.
 """
 
 from __future__ import annotations
 
+import csv
 import hashlib
 import io
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any
-
-import os
 
 import pandas as pd
 import yaml
@@ -37,62 +46,77 @@ ROW_COL = "_row"
 CONFIG_DIR = Path(os.environ.get("CORROBORAI_CONFIG_DIR",
                                  Path(__file__).resolve().parents[3] / "config"))
 DEFAULT_CONFIG = CONFIG_DIR / "datasets.yaml"
+SUPPORTED_SUFFIXES = (".xlsx", ".xlsm", ".csv")
+REQUIRED_TABLES = ("source", "target", "poste_detail", "motifs")
 
 
 class DataLoadError(RuntimeError):
-    """Un jeu de données requis est absent, altéré ou mal structuré."""
+    """Un jeu de données requis est absent, illisible ou mal structuré."""
 
 
 class FileStatus(str, Enum):
-    OK = "OK"
-    OK_RENAMED = "OK_RENOMME"          # contenu identique, nom différent
-    HASH_MISMATCH = "EMPREINTE_DIFFERENTE"
-    MISSING = "ABSENT"
-    NOT_IN_MANIFEST = "HORS_MANIFEST"
+    CONFORME_MANIFESTE = "CONFORME_AU_MANIFESTE"
+    DIFFERENT_MANIFESTE = "DIFFERENT_DU_MANIFESTE"   # informatif (ex. jeu de test plus volumineux)
+    SANS_MANIFESTE = "NON_VERIFIE_SANS_MANIFESTE"
+    ABSENT = "ABSENT"
+    INCHANGE = "INCHANGE"                            # vérification après traitement
+    MODIFIE = "MODIFIE"
+
+
+PRESENT = {FileStatus.CONFORME_MANIFESTE, FileStatus.DIFFERENT_MANIFESTE, FileStatus.SANS_MANIFESTE,
+           FileStatus.INCHANGE}
 
 
 @dataclass(frozen=True)
 class FileCheck:
-    logical_name: str | None
-    manifest_path: str | None
-    resolved_path: Path | None
-    expected_sha256: str | None
-    actual_sha256: str | None
+    logical_name: str
+    path: Path | None
+    sha256: str | None
+    manifest_sha256: str | None
     status: FileStatus
     required: bool
+    note: str = ""
 
     @property
-    def ok(self) -> bool:
-        return self.status in (FileStatus.OK, FileStatus.OK_RENAMED)
+    def present(self) -> bool:
+        return self.status in PRESENT
 
 
 @dataclass
 class IntegrityReport:
     checks: list[FileCheck] = field(default_factory=list)
+    strict: bool = False
+    manifest_found: bool = False
+    notes: list[str] = field(default_factory=list)
+
+    def _failed(self, c: FileCheck) -> bool:
+        if not c.required:
+            return False
+        if not c.present:
+            return True
+        return self.strict and c.status in (FileStatus.DIFFERENT_MANIFESTE, FileStatus.SANS_MANIFESTE)
 
     @property
     def ok(self) -> bool:
-        return all(c.ok for c in self.checks if c.required)
+        return not any(self._failed(c) for c in self.checks)
 
     def failures(self) -> list[FileCheck]:
-        return [c for c in self.checks if c.required and not c.ok]
+        return [c for c in self.checks if self._failed(c)]
 
     def warnings(self) -> list[FileCheck]:
-        return [c for c in self.checks if not c.required and not c.ok]
+        return [c for c in self.checks if not self._failed(c)
+                and c.status in (FileStatus.DIFFERENT_MANIFESTE, FileStatus.SANS_MANIFESTE, FileStatus.ABSENT)]
 
     def to_records(self) -> list[dict[str, Any]]:
-        return [
-            {
-                "fichier_logique": c.logical_name or "",
-                "manifest": c.manifest_path or "",
-                "fichier_lu": c.resolved_path.name if c.resolved_path else "",
-                "sha256_attendu": c.expected_sha256 or "",
-                "sha256_calcule": c.actual_sha256 or "",
-                "statut": c.status.value,
-                "requis": c.required,
-            }
-            for c in self.checks
-        ]
+        return [{
+            "fichier_logique": c.logical_name,
+            "fichier_lu": c.path.name if c.path else "",
+            "requis": c.required,
+            "statut": c.status.value,
+            "sha256": c.sha256 or "",
+            "sha256_manifeste": c.manifest_sha256 or "",
+            "note": c.note,
+        } for c in self.checks]
 
 
 @dataclass(frozen=True)
@@ -114,11 +138,21 @@ class DataBundle:
     integrity: IntegrityReport
     data_dir: Path
     config_path: Path
+    read_hashes: dict[str, tuple[Path, str]] = field(default_factory=dict)
 
     def verify_unchanged(self) -> IntegrityReport:
-        """Recalcule les empreintes ; à appeler en fin de traitement pour
-        démontrer que les fichiers d'origine n'ont pas été modifiés."""
-        return verify_manifest(self.data_dir, _load_registry(self.config_path))
+        """Recalcule l'empreinte de chaque fichier lu et la compare à celle
+        calculée à la lecture : preuve que le traitement n'a rien modifié."""
+        report = IntegrityReport()
+        for logical, (path, sha) in self.read_hashes.items():
+            if not path.is_file():
+                report.checks.append(FileCheck(logical, path, None, sha, FileStatus.ABSENT, True,
+                                               "fichier disparu pendant le traitement"))
+                continue
+            now = sha256_bytes(path.read_bytes())
+            status = FileStatus.INCHANGE if now == sha else FileStatus.MODIFIE
+            report.checks.append(FileCheck(logical, path, now, sha, status, True))
+        return report
 
 
 # --------------------------------------------------------------------------- utilitaires
@@ -132,70 +166,77 @@ def name_key(name: str) -> str:
     return re.sub(r"[^a-z0-9]", "", strip_accents(name).casefold())
 
 
+def _stem_key(name: str) -> str:
+    return name_key(Path(name).stem)
+
+
 def _load_registry(config_path: Path | None) -> dict[str, dict[str, Any]]:
     path = Path(config_path) if config_path else DEFAULT_CONFIG
     with path.open("r", encoding="utf-8") as fh:
         return yaml.safe_load(fh)
 
 
-def _read_manifest(data_dir: Path) -> list[dict[str, Any]]:
+def _read_manifest(data_dir: Path, notes: list[str]) -> dict[str, str] | None:
+    """{clé de nom (sans extension): sha256} ; None si absent ou illisible (avec note)."""
     path = data_dir / "manifest.json"
     if not path.is_file():
-        raise DataLoadError(f"manifest.json introuvable dans {data_dir}")
-    return json.loads(path.read_bytes().decode("utf-8"))["files"]
+        return None
+    try:
+        files = json.loads(path.read_bytes().decode("utf-8"))["files"]
+        return {_stem_key(e["path"]): e["sha256"] for e in files if e.get("path") and e.get("sha256")}
+    except (ValueError, KeyError, TypeError) as exc:
+        notes.append(f"manifest.json illisible, ignoré ({exc.__class__.__name__})")
+        return None
 
 
-def _resolve(data_dir: Path, wanted: str, sha: str | None) -> tuple[Path | None, bool]:
-    """Retourne (chemin, renommé?). Ordre : nom exact, nom tolérant, empreinte."""
+def _candidates(data_dir: Path) -> list[Path]:
+    return sorted(p for p in data_dir.iterdir()
+                  if p.is_file() and not p.name.startswith(".") and p.suffix.lower() in SUPPORTED_SUFFIXES)
+
+
+def _resolve(data_dir: Path, wanted: str) -> tuple[Path | None, str]:
+    """Retourne (chemin, mode de résolution). Ordre : nom exact, autre extension, nom tolérant."""
     exact = data_dir / wanted
     if exact.is_file():
-        return exact, False
-    candidates = [p for p in data_dir.iterdir() if p.is_file()]
-    key = name_key(wanted)
-    for p in candidates:
-        if name_key(p.name) == key:
-            return p, True
-    if sha:
-        for p in candidates:
-            if p.suffix.lower() == Path(wanted).suffix.lower() and sha256_bytes(p.read_bytes()) == sha:
-                return p, True
-    return None, False
-
-
-# --------------------------------------------------------------------------- intégrité
-
-def verify_manifest(data_dir: Path, registry: dict[str, dict[str, Any]]) -> IntegrityReport:
-    data_dir = Path(data_dir)
-    manifest = _read_manifest(data_dir)
-    by_key = {name_key(e["path"]): e for e in manifest}
-    required = {name_key(spec["file"]): logical for logical, spec in registry.items()}
-
-    report = IntegrityReport()
-    for key, entry in by_key.items():
-        logical = required.get(key)
-        path, renamed = _resolve(data_dir, entry["path"], entry.get("sha256"))
-        if path is None:
-            status, actual = FileStatus.MISSING, None
-        else:
-            actual = sha256_bytes(path.read_bytes())
-            if actual != entry.get("sha256"):
-                status = FileStatus.HASH_MISMATCH
-            else:
-                status = FileStatus.OK_RENAMED if renamed else FileStatus.OK
-        report.checks.append(
-            FileCheck(logical, entry["path"], path, entry.get("sha256"), actual, status, logical is not None)
-        )
-    for key, logical in required.items():
-        if key not in by_key:
-            report.checks.append(
-                FileCheck(logical, None, None, None, None, FileStatus.NOT_IN_MANIFEST, True)
-            )
-    return report
+        return exact, ""
+    files = _candidates(data_dir)
+    stem = Path(wanted).stem
+    for p in files:
+        if p.stem == stem:
+            return p, f"trouvé au format {p.suffix.lower()}"
+    key = _stem_key(wanted)
+    for p in files:
+        if _stem_key(p.name) == key:
+            return p, f"trouvé sous le nom « {p.name} »"
+    return None, ""
 
 
 # --------------------------------------------------------------------------- lecture
 
-def _read_excel_bytes(data: bytes, sheet: Any) -> pd.DataFrame | dict[str, pd.DataFrame]:
+def _decode(data: bytes) -> str:
+    for enc in ("utf-8-sig", "cp1252"):
+        try:
+            return data.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return data.decode("latin-1")
+
+
+def read_csv_bytes(data: bytes) -> pd.DataFrame:
+    """CSV avec détection de l'encodage (UTF-8, CP1252) et du séparateur (; , tabulation)."""
+    text = _decode(data)
+    first = next((line for line in text.splitlines() if line.strip()), "")
+    try:
+        sep = csv.Sniffer().sniff(first, delimiters=";,\t").delimiter
+    except csv.Error:
+        sep = ","
+    return pd.read_csv(io.StringIO(text), sep=sep, dtype=str, keep_default_na=False, na_values=[""])
+
+
+def _read_table(data: bytes, suffix: str, sheet: Any) -> pd.DataFrame | dict[str, pd.DataFrame]:
+    if suffix == ".csv":
+        df = read_csv_bytes(data)
+        return {"Mapping": df} if sheet is None else df
     return pd.read_excel(io.BytesIO(data), sheet_name=sheet, dtype=str)
 
 
@@ -222,68 +263,82 @@ def unpack_packed_csv(df: pd.DataFrame) -> pd.DataFrame:
                        na_values=[""])
 
 
-def _check_columns(name: str, df: pd.DataFrame, required: list[str]) -> None:
+def _check_columns(name: str, path: Path, df: pd.DataFrame, required: list[str]) -> None:
     missing = [c for c in required if c not in df.columns]
     if missing:
-        raise DataLoadError(f"Colonnes requises absentes dans « {name} » : {missing}")
+        raise DataLoadError(f"Colonnes requises absentes dans « {name} » ({path.name}) : {missing}")
 
 
 def load_bundle(data_dir: str | Path, config_path: str | Path | None = None,
-                strict: bool = True) -> DataBundle:
+                strict_manifest: bool = False) -> DataBundle:
     """Charge et valide tous les jeux de données.
 
-    En mode strict, un fichier requis absent ou dont l'empreinte diffère du
-    manifest lève :class:`DataLoadError`.
+    Un fichier requis absent, illisible ou sans ses colonnes requises lève
+    :class:`DataLoadError`. Le manifeste est informatif, sauf avec
+    ``strict_manifest`` (tout fichier requis doit alors y être conforme).
     """
     data_dir = Path(data_dir)
     if not data_dir.is_dir():
         raise DataLoadError(f"Répertoire de données introuvable : {data_dir}")
     config_path = Path(config_path) if config_path else DEFAULT_CONFIG
     registry = _load_registry(config_path)
-    integrity = verify_manifest(data_dir, registry)
-    if strict and not integrity.ok:
-        details = "; ".join(f"{c.logical_name}: {c.status.value}" for c in integrity.failures())
-        raise DataLoadError(f"Contrôle d'intégrité échoué — {details}")
+    integrity = IntegrityReport(strict=strict_manifest)
+    manifest = _read_manifest(data_dir, integrity.notes)
+    integrity.manifest_found = manifest is not None
 
-    paths = {c.logical_name: c.resolved_path for c in integrity.checks if c.logical_name}
     tables: dict[str, LoadedTable] = {}
     mapping: dict[str, pd.DataFrame] = {}
     mapping_sha = ""
+    read_hashes: dict[str, tuple[Path, str]] = {}
+    missing: list[str] = []
 
     for logical, spec in registry.items():
-        path = paths.get(logical)
+        required = not spec.get("optional", False)
+        path, how = _resolve(data_dir, spec["file"])
         if path is None:
-            path, _ = _resolve(data_dir, spec["file"], None)
-        if path is None:
-            raise DataLoadError(f"Fichier introuvable pour « {logical} » : {spec['file']}")
+            integrity.checks.append(FileCheck(logical, None, None, None, FileStatus.ABSENT, required,
+                                              f"attendu : {spec['file']} (ou .csv)"))
+            if required:
+                missing.append(f"{logical} ({spec['file']})")
+            continue
         data = path.read_bytes()
         sha = sha256_bytes(data)
-        parsed = _read_excel_bytes(data, spec.get("sheet", 0))
+        read_hashes[logical] = (path, sha)
+        expected = manifest.get(_stem_key(spec["file"])) if manifest is not None else None
+        if manifest is None:
+            status = FileStatus.SANS_MANIFESTE
+        elif expected is None:
+            status, how = FileStatus.SANS_MANIFESTE, ", ".join(x for x in (how, "absent du manifeste") if x)
+        else:
+            status = FileStatus.CONFORME_MANIFESTE if sha == expected else FileStatus.DIFFERENT_MANIFESTE
+        integrity.checks.append(FileCheck(logical, path, sha, expected, status, required, how))
 
+        try:
+            parsed = _read_table(data, path.suffix.lower(), spec.get("sheet", 0))
+        except Exception as exc:  # noqa: BLE001 — message utilisateur explicite
+            raise DataLoadError(f"Fichier illisible pour « {logical} » ({path.name}) : {exc}") from exc
         if logical == "mapping":
             mapping = {str(k): _clean(v) for k, v in parsed.items()}  # type: ignore[union-attr]
             mapping_sha = sha
             continue
-
         assert isinstance(parsed, pd.DataFrame)
         if spec.get("packed_csv"):
             parsed = unpack_packed_csv(parsed)
         df = _clean(parsed)
-        _check_columns(logical, df, spec.get("required_columns", []))
+        _check_columns(logical, path, df, spec.get("required_columns", []))
         tables[logical] = LoadedTable(logical, path, sha, df)
 
-    for logical in ("source", "target", "poste_detail", "motifs"):
+    if missing:
+        raise DataLoadError(f"Fichier(s) requis introuvable(s) dans {data_dir} : {', '.join(missing)}")
+    for logical in REQUIRED_TABLES:
         if logical not in tables:
             raise DataLoadError(f"Jeu de données « {logical} » non déclaré dans la configuration")
+    if strict_manifest and not integrity.ok:
+        details = "; ".join(f"{c.logical_name}: {c.status.value}" for c in integrity.failures())
+        raise DataLoadError(f"Contrôle du manifeste (mode strict) échoué — {details}")
 
     return DataBundle(
-        source=tables["source"],
-        target=tables["target"],
-        poste_detail=tables["poste_detail"],
-        motifs=tables["motifs"],
-        mapping=mapping,
-        mapping_sha256=mapping_sha,
-        integrity=integrity,
-        data_dir=data_dir,
-        config_path=config_path,
+        source=tables["source"], target=tables["target"], poste_detail=tables["poste_detail"],
+        motifs=tables["motifs"], mapping=mapping, mapping_sha256=mapping_sha, integrity=integrity,
+        data_dir=data_dir, config_path=config_path, read_hashes=read_hashes,
     )

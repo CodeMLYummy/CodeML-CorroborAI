@@ -8,7 +8,7 @@ from corroborai.cli import main
 from corroborai.rules_config import load_rules
 from corroborai.analysis import load_hypotheses, load_scoring
 from corroborai.rules_doc import documentation_markdown, rules_markdown
-from tests._helpers import DATA_DIR, REPO, requires_data
+from tests._helpers import REPO, fixture_dir
 
 
 class TestRulesDoc(unittest.TestCase):
@@ -59,12 +59,12 @@ class TestRulesCli(unittest.TestCase):
         Path(fh.name).unlink()
         self.assertIn("ERREUR", err.getvalue())
 
-    @requires_data
     def test_check_includes_rules(self):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            self.assertEqual(main(["check", "--data-dir", str(DATA_DIR)]), 0)
+            self.assertEqual(main(["check", "--data-dir", str(fixture_dir())]), 0)
         self.assertIn("0 erreur(s)", out.getvalue())
+        self.assertIn("Mapping.xlsx non fourni", out.getvalue())
 
 
 if __name__ == "__main__":

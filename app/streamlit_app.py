@@ -69,8 +69,8 @@ with st.sidebar:
     if mode == "Répertoire":
         data_dir = st.text_input("Répertoire des données", value=os.environ.get("CORROBORAI_DATA_DIR", "data"))
     else:
-        uploads = st.file_uploader("Fichiers du défi (avec manifest.json)", accept_multiple_files=True,
-                                   type=["xlsx", "json", "pdf", "pptx"])
+        uploads = st.file_uploader("Fichiers du défi (Excel ou CSV ; manifest.json facultatif)",
+                                   accept_multiple_files=True, type=["xlsx", "csv", "json", "pdf", "pptx"])
         st.caption("Les fichiers sont copiés dans un répertoire de travail temporaire ; les originaux "
                    "ne sont jamais modifiés.")
     from corroborai.rules_config import load_rules
@@ -124,8 +124,10 @@ with tab_overview:
     for col, v in zip(cols, ("ANOMALIE", "INDETERMINE", "JUSTIFIE", "CONFORME")):
         col.metric(v.capitalize(), counts[v])
     st.caption(f"{len(result.findings)} verdicts · {sum(p.matched for p in result.pairs)} affectations "
-               f"appariées sur {len(result.pairs)} · intégrité des fichiers après traitement : "
-               f"{'OK' if result.integrity_after.ok else 'ÉCHEC'}")
+               f"appariées sur {len(result.pairs)} · fichiers sources après traitement : "
+               f"{'inchangés' if result.integrity_after.ok else 'MODIFIÉS'}")
+    for w in run.bundle.integrity.warnings():
+        st.caption(f"⚠ {w.logical_name} : {w.status.value}{f' — {w.note}' if w.note else ''}")
     if result.feedback is not None:
         fb = result.feedback
         st.caption(f"Rétroaction experte : {sum(len(x) for x in fb.rules_applied.values())} écart(s) par règle, "

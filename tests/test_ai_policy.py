@@ -21,7 +21,7 @@ from corroborai.engine import corroborate
 from corroborai.io.loaders import load_bundle
 from corroborai.rules_config import load_rules
 from tests._ai_helpers import mini_dossier
-from tests._helpers import DATA_DIR, requires_data
+from tests._helpers import fixture_dir
 
 RAW = yaml.safe_load(DEFAULT_LLM.read_text(encoding="utf-8"))
 CFG = load_llm_config()
@@ -142,12 +142,11 @@ class TestFlow(unittest.TestCase):
         self.assertNotIn("<", text)
 
 
-@requires_data
 class TestRealDossiersAreSafeForExternal(unittest.TestCase):
     """Tous les dossiers réellement produits passent la politique externe."""
 
     def test_all_dossiers(self):
-        bundle = load_bundle(DATA_DIR)
+        bundle = load_bundle(fixture_dir())
         result = corroborate(bundle, load_rules(), strict=True)
         pseudo = Pseudonymizer.from_bundle(bundle)
         gemini = CFG.provider("gemini")

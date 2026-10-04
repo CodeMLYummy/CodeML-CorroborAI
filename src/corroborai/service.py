@@ -22,7 +22,7 @@ from corroborai.report import write_csv, write_report
 from corroborai.rules_config import RulesConfig, load_rules, validate_against_data
 
 DEFAULT_FEEDBACK = Path("feedback/retroaction.yaml")
-ALLOWED_UPLOAD = re.compile(r"^[\w\-. ()'éèêàçÉ]+\.(xlsx|json|pdf|pptx)$", re.IGNORECASE)
+ALLOWED_UPLOAD = re.compile(r"^[\w\-. ()'éèêàçÉ]+\.(xlsx|xlsm|csv|json|pdf|pptx)$", re.IGNORECASE)
 
 
 class ServiceError(RuntimeError):
@@ -59,18 +59,16 @@ def stage_uploads(files: list[tuple[str, bytes]], dest: str | Path | None = None
         if not ALLOWED_UPLOAD.match(base):
             raise ServiceError(f"Nom de fichier refusé : {name!r}")
         (dest / base).write_bytes(data)
-    if not (dest / "manifest.json").is_file():
-        raise ServiceError("manifest.json est requis pour vérifier l'intégrité des fichiers.")
     return dest
 
 
 def run_pipeline(data_dir: str | Path, overrides: dict[str, str] | None = None,
                  feedback_path: str | Path | None = None, ia_provider: str | None = None,
                  llm_config: Any = None, out_dir: str | Path | None = None,
-                 transport: Any = None) -> PipelineRun:
+                 transport: Any = None, strict_manifest: bool = False) -> PipelineRun:
     """Chargement, validation, corroboration, analyse, rétroaction et (option) couche IA."""
     try:
-        bundle = load_bundle(data_dir)
+        bundle = load_bundle(data_dir, strict_manifest=strict_manifest)
     except Exception as exc:  # noqa: BLE001 — message utilisateur
         raise ServiceError(f"Chargement impossible : {exc}") from exc
     cfg = load_rules()

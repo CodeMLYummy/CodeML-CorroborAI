@@ -1,0 +1,6 @@
+# Dépendances d'exécution (équivalent de : pip install -e .)
+pandas>=2.1
+openpyxl>=3.1
+PyYAML>=6.0
+# Interface web (facultatif ; équivalent de : pip install -e ".[app]")
+streamlit>=1.36

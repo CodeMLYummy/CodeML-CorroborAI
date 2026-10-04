@@ -101,6 +101,11 @@ class FeedbackStore:
     rules: list[ExpertRule] = field(default_factory=list)
     corrections: list[Correction] = field(default_factory=list)
     path: Path | None = None
+    exists: bool = False      # le fichier existait-il au chargement ?
+
+    @property
+    def empty(self) -> bool:
+        return not self.rules and not self.corrections
 
     # ------------------------------------------------------------------ persistance
 
@@ -108,11 +113,11 @@ class FeedbackStore:
     def load(cls, path: str | Path, fields: set[str] | None = None) -> FeedbackStore:
         path = Path(path)
         if not path.exists():
-            return cls(path=path)
+            return cls(path=path, exists=False)
         raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         if raw.get("version") != 1:
             raise FeedbackError(f"{path.name} : version non supportée")
-        store = cls(path=path)
+        store = cls(path=path, exists=True)
         for r in raw.get("rules") or []:
             store.rules.append(ExpertRule(**{k: r[k] for k in r if k in ExpertRule.__dataclass_fields__}))
         for c in raw.get("corrections") or []:
@@ -131,7 +136,7 @@ class FeedbackStore:
         tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_text(yaml.safe_dump(doc, allow_unicode=True, sort_keys=False), encoding="utf-8")
         tmp.replace(path)  # écriture atomique
-        self.path = path
+        self.path, self.exists = path, True
         return path
 
     # ------------------------------------------------------------------ validation
@@ -279,6 +284,17 @@ def rule_matches(rule: ExpertRule, f: Finding, ctx: RuleContext) -> bool:
 
 def _s(v: Any) -> str:
     return "" if v is None else (v.isoformat() if hasattr(v, "isoformat") else str(v))
+
+
+def store_status(store: FeedbackStore) -> str | None:
+    """Explication lisible quand aucune rétroaction n'est appliquée (sinon None)."""
+    if not store.exists:
+        return (f"fichier de rétroaction introuvable ({store.path}) : aucune rétroaction appliquée. "
+                "Il est créé par l'interface (corroborai app) à la première correction ou règle acceptée ; "
+                "un exemple est fourni dans feedback/exemple_retroaction.yaml.")
+    if store.empty:
+        return f"fichier de rétroaction vide ({store.path}) : aucune règle ni correction enregistrée."
+    return None
 
 
 @dataclass

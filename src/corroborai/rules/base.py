@@ -11,6 +11,7 @@ de jointure) ; la décision est ensuite uniforme :
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date
@@ -51,6 +52,17 @@ class PosteRecord:
     values: dict[str, Any]
 
 
+def parse_effective_date(raw: Any, excel_serial: bool) -> date | None:
+    """Date d'effet : numéro de série Excel (extraction d'origine) ou date texte (export CSV)."""
+    text = "" if raw is None else str(raw).strip()
+    try:
+        if excel_serial and re.fullmatch(r"\d+(?:\.0+)?", text):
+            return excel_serial_to_date(text)
+        return normalize(raw, FieldKind.DATE)
+    except NormalizationError:
+        return None
+
+
 @dataclass
 class Refs:
     """Index des tables de jointure, construits une seule fois."""
@@ -64,12 +76,7 @@ class Refs:
         history: dict[str, list[PosteRecord]] = defaultdict(list)
         for rec in bundle.poste_detail.df.to_dict("records"):
             poste = norm_code(rec.get(pj.col("poste").table))
-            raw_date = rec.get(pj.col("date_effet").table)
-            try:
-                eff = (excel_serial_to_date(raw_date) if pj.col("date_effet").excel_serial
-                       else normalize(raw_date, FieldKind.DATE))
-            except NormalizationError:
-                eff = None
+            eff = parse_effective_date(rec.get(pj.col("date_effet").table), pj.col("date_effet").excel_serial)
             if poste is None or eff is None:
                 continue
             history[poste].append(PosteRecord(eff, norm_code(rec.get(pj.col("unite_admin").table)),

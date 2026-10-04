@@ -538,7 +538,7 @@ def validate_against_data(cfg: RulesConfig, bundle: DataBundle) -> ValidationRes
         if not bundle.motifs.df[motifs.col("situation").table].is_unique:
             res.errors.append("jointure motifs : la clé de situation n'est pas unique")
 
-    # Références vers Mapping.xlsx
+    # Références vers Mapping.xlsx (seulement si le fichier est fourni)
     refs: list[tuple[str, MappingRef]] = []
     for f in cfg.fields:
         refs.append((f.target, f.mapping_ref))
@@ -547,7 +547,7 @@ def validate_against_data(cfg: RulesConfig, bundle: DataBundle) -> ValidationRes
     refs.extend((f"jointure {j.name}", j.mapping_ref) for j in cfg.joins.values())
     refs.extend((f"exclusion {e.source}", e.mapping_ref) for e in cfg.excluded)
     refs.extend((f"support {s.column}", s.mapping_ref) for s in cfg.support_columns)
-    for label, ref in refs:
+    for label, ref in (refs if bundle.mapping else []):
         if ref.sheet not in bundle.mapping:
             res.errors.append(f"{label} : feuille inconnue « {ref.sheet} »")
         elif _row(bundle, ref) is None:
@@ -555,7 +555,9 @@ def validate_against_data(cfg: RulesConfig, bundle: DataBundle) -> ValidationRes
 
     sheet = bundle.mapping.get(MAPPING_SHEET)
     if sheet is None:
-        res.errors.append(f"feuille « {MAPPING_SHEET} » absente de Mapping.xlsx")
+        res.warnings.append("Mapping.xlsx non fourni : références de règles non vérifiées "
+                            "(config/rules.yaml reste la source exécutée)")
+        _data_warnings(cfg, bundle, src_cols, res)
         return res
     col_a, col_b = _mapping_columns(sheet)
 
@@ -606,7 +608,12 @@ def validate_against_data(cfg: RulesConfig, bundle: DataBundle) -> ValidationRes
         if real != col:
             res.errors.append(f"{item.mapping_ref} : attendu « {col} », trouvé « {real} »")
 
-    # Avertissements : valeurs des données non couvertes par les tables de règles
+    _data_warnings(cfg, bundle, src_cols, res)
+    return res
+
+
+def _data_warnings(cfg: RulesConfig, bundle: DataBundle, src_cols: set[str], res: ValidationResult) -> None:
+    """Avertissements : valeurs des données non couvertes par les tables de règles."""
     sit_col = next((f.sources[0] for f in cfg.fields if f.rule == "situation_label"), None)
     if sit_col in src_cols:
         for v in sorted({norm_code(v) for v in bundle.source.df[sit_col] if norm_code(v)}):
@@ -615,5 +622,3 @@ def validate_against_data(cfg: RulesConfig, bundle: DataBundle) -> ValidationRes
     for rec in bundle.source.df.to_dict("records"):
         if cfg.contract_type_for(rec) is None:
             res.warnings.append(f"type d'employé non couvert (ligne source {rec[ROW_COL]}) : verdict INDETERMINE")
-
-    return res

@@ -12,7 +12,7 @@ from corroborai.engine import ASSIGNMENT_FIELD, corroborate
 from corroborai.io.loaders import load_bundle
 from corroborai.models import Confidence, DecisionSource, Verdict
 from corroborai.rules_config import load_rules
-from tests._helpers import DATA_DIR, requires_data
+from tests._helpers import CHALLENGE_DIR, requires_challenge_data
 
 ALL_PERSONS_PRIMARY = 22  # affectations appariées
 
@@ -36,11 +36,11 @@ EXPECTED_ANOMALIES = {
 SYSTEMIC_ANOMALY_FIELDS = {"contactEmail", "positionName"}  # 22/22 : artefacts d'anonymisation
 
 
-@requires_data
+@requires_challenge_data
 class TestEngineRealData(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.bundle = load_bundle(DATA_DIR)
+        cls.bundle = load_bundle(CHALLENGE_DIR)
         cls.cfg = load_rules()
         cls.result = corroborate(cls.bundle, cls.cfg, strict=True)
 

@@ -1,11 +1,13 @@
 # Registre des jeux de données d'entrée.
-# Les fichiers sont toujours lus en LECTURE SEULE et leur SHA-256 est vérifié
-# contre manifest.json avant tout traitement.
+# Les fichiers sont toujours lus en LECTURE SEULE ; leur empreinte SHA-256 est
+# recalculée en fin de traitement pour prouver qu'ils n'ont pas été modifiés.
+# Si un manifest.json est présent, les empreintes y sont comparées (informatif).
 #
-#   file             : nom attendu (tel qu'il apparaît dans manifest.json)
-#   sheet            : index ou nom de feuille ; null = toutes les feuilles
+#   file             : nom attendu ; le même nom en .csv est aussi accepté
+#   sheet            : index ou nom de feuille Excel ; null = toutes les feuilles
 #   packed_csv       : true si le fichier Excel contient un CSV « tassé » dans une seule colonne
 #   required_columns : colonnes dont l'absence rend le jeu inutilisable
+#   optional         : true si le fichier peut être absent
 
 source:
   file: Employe_Source_Anonymise_VF.xlsx
@@ -32,7 +34,10 @@ motifs:
   sheet: 0
   required_columns: [CodeCatégorieStatut, CodeStatutSystèmeExterne, CodeGestionAccès]
 
+# Facultatif : config/rules.yaml est la source exécutée ; Mapping.xlsx sert à
+# vérifier la traçabilité des références de règles lorsqu'il est fourni.
 mapping:
   file: Mapping.xlsx
   sheet: null
+  optional: true
   required_columns: []

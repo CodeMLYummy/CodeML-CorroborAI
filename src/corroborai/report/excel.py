@@ -91,21 +91,32 @@ def _style_header(ws: Worksheet, row: int, ncols: int) -> None:
         cell.border = Border(bottom=THIN)
 
 
+# Styles partagés : créés une seule fois (l'attribution d'un objet existant est bien plus rapide)
+_TOP = Alignment(vertical="top")
+_WRAP = Alignment(vertical="top", wrap_text=True)
+_BOLD = Font(name=FONT, size=10, bold=True)
+
+
 def _write_table(ws: Worksheet, columns: list[tuple[str, str, int, bool]],
                  records: list[dict[str, Any]], verdict_key: str | None = "verdict") -> None:
+    """Écrit un tableau. La police par défaut du classeur (Arial 10) évite de styler chaque cellule."""
     ws.append([c[0] for c in columns])
     _style_header(ws, 1, len(columns))
-    for rec in records:
-        ws.append([rec.get(c[1]) for c in columns])
-    for idx, (_, key, width, wrap) in enumerate(columns, start=1):
-        letter = get_column_letter(idx)
-        ws.column_dimensions[letter].width = width
-        for cell in ws[letter][1:]:
-            cell.font = Font(name=FONT, size=10)
-            cell.alignment = Alignment(vertical="top", wrap_text=wrap)
-            if verdict_key and key == verdict_key and cell.value in VERDICT_FILLS:
-                cell.fill = VERDICT_FILLS[cell.value]
-                cell.font = Font(name=FONT, size=10, bold=True)
+    keys = [c[1] for c in columns]
+    aligns = [_WRAP if c[3] else _TOP for c in columns]
+    vcol = keys.index(verdict_key) if verdict_key in keys else None
+    for r, rec in enumerate(records, start=2):
+        for c, (key, align) in enumerate(zip(keys, aligns), start=1):
+            cell = ws.cell(row=r, column=c, value=rec.get(key))   # accès direct, temps constant
+            cell.alignment = align
+        if vcol is not None:
+            cell = ws.cell(row=r, column=vcol + 1)
+            fill = VERDICT_FILLS.get(cell.value)
+            if fill is not None:
+                cell.fill = fill
+                cell.font = _BOLD
+    for idx, (_, _, width, _) in enumerate(columns, start=1):
+        ws.column_dimensions[get_column_letter(idx)].width = width
     ws.freeze_panes = "B2" if columns and columns[0][1] in ("finding_id", "person_id", "priority") else "A2"
     if records:
         ws.auto_filter.ref = f"A1:{get_column_letter(len(columns))}{len(records) + 1}"
@@ -143,15 +154,23 @@ def _synthesis(ws: Worksheet, result: CorroborationResult, n_detail: int) -> Non
     r = _kv(ws, r, "Configuration des règles", str(result.cfg.path.name if result.cfg.path else ""))
     ov = ", ".join(f"{k}={v}" for k, v in result.overrides.items()) or "aucune (choix par défaut)"
     r = _kv(ws, r, "Interprétations forcées", ov)
-    r = _kv(ws, r, "Intégrité avant traitement", "OK" if result.integrity_before.ok else "ÉCHEC",
-            bold=True)
-    r = _kv(ws, r, "Intégrité après traitement",
-            "OK — fichiers sources inchangés" if result.integrity_after.ok else "ÉCHEC", bold=True)
+    ib = result.integrity_before
+    differ = [c.logical_name for c in ib.checks if c.status.value == "DIFFERENT_DU_MANIFESTE"]
+    manifest_txt = ("aucun manifest.json (empreintes non comparées)" if not ib.manifest_found else
+                    "fichiers conformes au manifeste" if not differ else
+                    f"différents du manifeste : {', '.join(differ)} (informatif)")
+    r = _kv(ws, r, "Contrôle du manifeste", manifest_txt)
+    r = _kv(ws, r, "Fichiers sources après traitement",
+            "inchangés — empreintes SHA-256 identiques avant et après" if result.integrity_after.ok
+            else "MODIFIÉS — ÉCHEC", bold=True)
     r = _kv(ws, r, "Erreurs d'évaluation", len(result.errors))
     if result.analysis:
         r = _kv(ws, r, "Motifs détectés", len(result.analysis.patterns))
         r = _kv(ws, r, "Règles candidates", len(result.analysis.candidate_rules))
-        if result.feedback is not None:
+        if result.feedback is not None and result.feedback.store is not None and not result.feedback.store.exists:
+            r = _kv(ws, r, "Rétroaction experte", f"fichier introuvable ({result.feedback.store.path}) — "
+                                                  "aucune rétroaction appliquée")
+        elif result.feedback is not None:
             fb = result.feedback
             n_rules = sum(1 for x in fb.rules_applied.values() if x)
             r = _kv(ws, r, "Rétroaction experte",
@@ -274,6 +293,13 @@ def _feedback_records(result: CorroborationResult) -> list[dict[str, Any]]:
     fb = result.feedback
     if fb is None or fb.store is None:
         return []
+    from corroborai.feedback import store_status
+
+    status = store_status(fb.store)
+    if status is not None:
+        return [{"kind": "Information", "id": "", "field": "", "description": status, "reason": "",
+                 "provenance": "", "author": "", "created": "", "count": 0,
+                 "status": "introuvable" if not fb.store.exists else "vide"}]
     out = []
     for r in fb.store.rules:
         n = len(fb.rules_applied.get(r.id, []))
@@ -364,6 +390,11 @@ def write_report(result: CorroborationResult, path: str | Path) -> Path:
     by = lambda *vs: [r for r in records if r["verdict"] in vs]  # noqa: E731
 
     wb = Workbook()
+    # Police par défaut du classeur (index 0) : évite de styler chaque cellule une à une.
+    # openpyxl n'expose pas de réglage public pour cela ; vérifié par test (police lue = Arial).
+    from openpyxl.utils.indexed_list import IndexedList
+
+    wb._fonts = IndexedList([Font(name=FONT, size=10)])
     ws = wb.active
     ws.title = "Synthèse"
     sheets: list[tuple[str, Callable[[Worksheet], None]]] = [
@@ -382,10 +413,11 @@ def write_report(result: CorroborationResult, path: str | Path) -> Path:
         ("Affectations", lambda w: _write_table(w, PAIR_COLUMNS, _pairs_records(result), verdict_key=None)),
         ("Interprétations", lambda w: _interpretations(w, result)),
         ("Intégrité", lambda w: _write_table(w, [
-            ("Fichier", "manifest", 40, False), ("Lu sous le nom", "fichier_lu", 38, False),
-            ("Requis", "requis", 8, False), ("Statut avant", "statut", 18, False),
-            ("Statut après", "statut_apres", 18, False), ("SHA-256 attendu", "sha256_attendu", 66, False),
-            ("SHA-256 après traitement", "sha256_apres", 66, False)],
+            ("Fichier logique", "fichier_logique", 16, False), ("Fichier lu", "fichier_lu", 40, False),
+            ("Requis", "requis", 8, False), ("Contrôle du manifeste", "statut", 28, False),
+            ("Après traitement", "statut_apres", 16, False), ("SHA-256 à la lecture", "sha256", 66, False),
+            ("SHA-256 après traitement", "sha256_apres", 66, False),
+            ("SHA-256 du manifeste", "sha256_manifeste", 66, False), ("Note", "note", 40, True)],
             _integrity_records(result), verdict_key=None)),
     ]
     for title, writer in sheets:
@@ -400,12 +432,12 @@ def write_report(result: CorroborationResult, path: str | Path) -> Path:
 
 
 def _integrity_records(result: CorroborationResult) -> list[dict[str, Any]]:
-    after = {r["manifest"]: r for r in result.integrity_after.to_records()}
+    after = {r["fichier_logique"]: r for r in result.integrity_after.to_records()}
     out = []
     for r in result.integrity_before.to_records():
-        a = after.get(r["manifest"], {})
+        a = after.get(r["fichier_logique"], {})
         out.append({**r, "requis": "oui" if r["requis"] else "non",
-                    "statut_apres": a.get("statut", ""), "sha256_apres": a.get("sha256_calcule", "")})
+                    "statut_apres": a.get("statut", ""), "sha256_apres": a.get("sha256", "")})
     return out
 
 

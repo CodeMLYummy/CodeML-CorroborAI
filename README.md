@@ -1,239 +1,250 @@
 # CorroborAI
 
-Corroboration hybride des données entre le **Système A – RH** (source) et le
-**Système B – Temps** (cible) : règles métier déterministes d'abord, IA
-encadrée seulement là où elle est nécessaire.
+**Corroboration intelligente des données entre un système RH et un système de gestion du temps.**
 
-> Documentation en cours de rédaction — ce README sera complété à chaque étape.
+CorroborAI compare les extractions du **Système A – RH** (source) et du
+**Système B – Temps** (cible), applique les règles métier du mapping, et classe
+chaque champ de chaque affectation comme **conforme**, **écart justifié**,
+**anomalie** ou **indéterminé**, avec une justification traçable jusqu'aux
+données et à la règle qui ont conduit au verdict. Le rapport final met en tête
+les seules anomalies à investiguer, triées par priorité, avec leur cause probable.
 
-## Installation
-
-```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev,app]"     # « app » ajoute Streamlit pour l'interface web
+```
+$ corroborai run --data-dir data --out out
+Corroboration terminée en 0.09 s — 551 verdicts, 22 affectations appariées sur 23
+  ANOMALIE       62
+  INDETERMINE     0
+  JUSTIFIE      128
+  CONFORME      361
+Fichiers sources après traitement : inchangés (empreintes identiques)
+Rapport : out/rapport_corroboration.xlsx
+CSV     : out/verdicts.csv
 ```
 
-## Données
+## Fonctionnalités
 
-Copier les fichiers du défi (tels que distribués, avec `manifest.json`) dans
-`data/`. Ils ne sont **jamais modifiés** : chaque fichier est lu une seule fois
-en octets et son SHA-256 est vérifié contre `manifest.json` avant traitement.
-Les noms sont résolus de façon tolérante (accents, apostrophes, NFC/NFD) ; en
-cas de renommage, c'est l'empreinte qui fait foi.
+- **Règles métier déterministes et traçables** — les 25 champs du mapping sont
+  codifiés dans `config/rules.yaml`, chacun relié à sa ligne de `Mapping.xlsx` ;
+  les ambiguïtés du texte des règles sont tranchées par des interprétations
+  documentées, et chaque champ est réévalué sous les interprétations alternatives.
+- **Analyse des écarts** — un moteur d'hypothèses (raisonnement abductif
+  symbolique) explique les anomalies : permutation entre deux employés, valeur
+  d'un autre enregistrement de l'historique, autre colonne source confirmée sur
+  toute la population, recodage systématique, écart systémique, type
+  d'affectation non transmis. Il propose des **règles candidates** à l'expert.
+- **Priorisation** — score de priorité transparent (criticité du champ ×
+  confiance × hypothèses) ; les erreurs isolées et certaines passent devant les
+  artefacts systémiques à traiter une seule fois.
+- **IA générative encadrée (optionnelle)** — synthèses rédigées pour l'équipe
+  fonctionnelle, piste pour les anomalies inexpliquées, traduction d'une
+  consigne experte en règle. Le LLM n'a aucun outil, ne peut pas modifier un
+  verdict, et toute sortie est validée ; fonctionne avec Gemini, un modèle local
+  (Ollama, LM Studio…) ou sans LLM.
+- **Protection des données** — pseudonymisation et politique de flux évaluée
+  avant tout envoi ; l'option « local » garde toutes les données sur le poste.
+- **Rétroaction experte** — l'expert corrige un verdict ou crée une règle (avec
+  aperçu d'impact) ; les corrections répétées génèrent des règles suggérées.
+- **Interface web** — chargement des fichiers, lancement, investigation écart
+  par écart avec les lignes d'origine ayant servi à la décision, rétroaction,
+  export.
+- **Fichiers sources intouchés** — lecture seule, avec preuve par empreinte
+  SHA-256 avant et après traitement.
+
+## Démarrage rapide
+
+**Prérequis :** Python 3.10 ou plus récent.
 
 ```bash
-corroborai run --data-dir data --out out        # corroboration complète + rapport
-corroborai run --data-dir data --out out \
-    --interpretation INT-ASSIGN-DATES=strict_literal   # forcer une interprétation alternative
-corroborai check --data-dir data      # intégrité des fichiers + validation des règles
-corroborai rules                      # liste des champs corroborés
-corroborai rules --markdown -o docs/REGLES.md   # régénère la documentation des règles
+git clone <dépôt> corroborai && cd corroborai
+python -m venv .venv && source .venv/bin/activate      # Windows : .venv\Scripts\activate
+pip install -e ".[app]"                                # ou : pip install -r requirements.txt
 ```
 
-## Interface web
+Déposer les fichiers d'extraction dans `data/` **sous leurs noms d'origine**,
+au format Excel ou CSV :
+
+| Fichier | Contenu | Requis |
+|---|---|:-:|
+| `Employe_Source_Anonymise_VF.xlsx` | extraction Système A – RH | oui |
+| `Employe_Destination_Anonymise_VF.xlsx` | extraction Système B – Temps | oui |
+| `détail_du_poste.xlsx` | historique du détail du poste | oui |
+| `Motif de la situation d'emploi.xlsx` | motifs des situations d'emploi | oui |
+| `Mapping.xlsx` | mapping, pour vérifier la traçabilité des règles | non |
+| `manifest.json` | empreintes des fichiers distribués | non |
+
+Puis :
 
 ```bash
-corroborai app        # ou : streamlit run app/streamlit_app.py
+corroborai check --data-dir data          # vérifie fichiers, colonnes et règles
+corroborai run --data-dir data --out out  # produit out/rapport_corroboration.xlsx et out/verdicts.csv
+corroborai app                            # ou lance l'interface web
 ```
 
-L'interface permet de charger les fichiers (répertoire ou téléversement — les
-fichiers téléversés sont copiés dans un répertoire temporaire, les originaux
-ne sont jamais modifiés), de choisir les interprétations et le mode IA, de
-lancer la corroboration, puis :
+> Le même nom en `.csv` est accepté (séparateur `;`, `,` ou tabulation ;
+> encodage UTF-8 ou Windows-1252), ainsi que les variations d'accents ou
+> d'apostrophes dans les noms. Les fichiers peuvent contenir plus de lignes que
+> l'échantillon d'origine. Si un `manifest.json` est présent, les empreintes y
+> sont comparées à titre informatif (`--manifeste-strict` pour l'exiger).
 
-- **Vue d'ensemble** — décomptes, intégrité, synthèse globale, priorités ;
-- **À investiguer** — écarts triés par priorité ; pour chacun : valeurs source /
-  attendue / cible, règle et référence Mapping.xlsx, cause probable, calcul de
-  la priorité, hypothèses, et **les lignes d'origine ayant servi à la décision** ;
-  correction du verdict par l'expert ;
-- **Motifs et règles candidates** — avec création d'une règle en un clic ;
-- **Rétroaction experte** — consigne en langage naturel traduite en règle,
-  formulaire, règles suggérées à partir des corrections, gestion de la
-  rétroaction enregistrée ;
-- **Tous les verdicts** et **Exporter** (Excel, CSV).
+## Le rapport
 
-## Rétroaction experte
-
-L'expert peut **corriger un verdict** ou **créer une règle** ; tout est
-enregistré dans `feedback/retroaction.yaml` (lisible, versionnable) et réappliqué
-à chaque exécution (`corroborai run --retroaction feedback/retroaction.yaml`).
-
-- Une **correction** porte une empreinte des valeurs jugées : si les données
-  changent, elle est déclarée *périmée* et n'est plus appliquée.
-- Une **règle experte** s'exprime dans un **mini-langage fermé** de quatre
-  opérations, qui ne peuvent que reconnaître des écarts comme acceptables
-  (ANOMALIE → JUSTIFIE) : `accept_alternative_source`, `accept_value_mapping`,
-  `accept_hypothesis`, `accept_subcategory`. Les verdicts conformes ne sont
-  jamais touchés.
-- Toute règle est **exécutée à blanc avant acceptation** : l'aperçu montre
-  exactement quels verdicts changeraient.
-- Les corrections répétées sur des écarts semblables génèrent des **règles
-  suggérées** (enrichissement de la base de règles).
-- Une consigne en langage naturel peut être **traduite par le LLM** en règle du
-  mini-langage, sous le même harnais : champ, colonnes, hypothèses et
-  sous-catégories doivent provenir du dossier, la règle doit être valide, puis
-  elle passe par l'aperçu et l'acceptation explicite. Sans LLM, le formulaire
-  produit les mêmes règles.
-
-Les verdicts modifiés portent la source de décision `EXPERT`, la règle ou la
-correction appliquée et le verdict initial ; la feuille « Rétroaction experte »
-du rapport liste chaque règle et correction avec son effet.
-
-## Rapport
-
-`corroborai run` produit `out/rapport_corroboration.xlsx` et `out/verdicts.csv` :
+`out/rapport_corroboration.xlsx` est conçu pour la personne qui investigue :
 
 | Feuille | Contenu |
 |---|---|
-| Synthèse | exécution, intégrité avant/après, décomptes (formules sur « Détail ») |
-| À investiguer | anomalies et indéterminés, triés par criticité puis confiance |
-| Écarts justifiés / Conformes | verdicts par catégorie |
-| Détail | tous les verdicts : valeurs source / attendue / cible, règle, référence Mapping.xlsx, preuves (table:ligne), paramètres |
-| Affectations | appariement source ↔ cible (méthode, similarité) |
-| Interprétations | taux d'accord avec la cible de chaque interprétation, par champ, et justification des choix |
-| Intégrité | empreintes SHA-256 avant et après traitement |
+| **Synthèse** | exécution, intégrité, décomptes, synthèse globale, priorités les plus élevées |
+| **À investiguer** | anomalies et indéterminés triés par priorité : valeurs source / attendue / cible, cause probable, justification, calcul de la priorité, règle, preuves |
+| **Motifs** | permutations, écarts systémiques, motifs récurrents |
+| **Règles candidates** | sources alternatives confirmées sur la population, à valider |
+| **Synthèses IA** | synthèse globale et par employé (si `--ia`) |
+| **Rétroaction experte** | règles et corrections appliquées, avec leur effet (si `--retroaction`) |
+| **Écarts justifiés** · **Conformes** | verdicts par catégorie |
+| **Détail** | tous les verdicts, toutes les colonnes de traçabilité |
+| **Affectations** | appariement source ↔ cible |
+| **Interprétations** | taux d'accord avec la cible de chaque interprétation, et justification |
+| **Intégrité** | contrôle du manifeste, empreintes avant et après traitement |
 
-Les feuilles **Motifs** (permutations, écarts systémiques, motifs récurrents) et
-**Règles candidates** (sources alternatives confirmées sur toute la population,
-à valider par l'expert) donnent une vue d'ensemble pour l'investigation.
+`out/verdicts.csv` contient le détail complet (UTF-8, séparateur `;`).
+Le [guide d'utilisation](docs/GUIDE_UTILISATEUR.md) explique comment lire un
+verdict et mener une investigation.
 
-Chaque verdict est produit par une règle déterministe (`REGLE_DETERMINISTE`).
-Un champ dont le verdict changerait sous une interprétation alternative voit
-sa confiance abaissée à `MOYENNE` et le verdict alternatif est tracé.
+## Comment ça fonctionne
 
-## Analyse des écarts (niveau 3, déterministe)
+| Niveau | Rôle | Nature |
+|:-:|---|---|
+| 0 | Chargement en lecture seule, normalisation (formats, vides, dates, encodage) | déterministe |
+| 1 | Appariement des affectations (par employé, type, puis similarité de contenu) | déterministe |
+| 2 | Règles métier : valeur attendue → verdict, sous chaque interprétation | déterministe |
+| 3 | Moteur d'hypothèses, règles candidates, score de priorité | IA symbolique, déterministe |
+| 4 | Synthèses, triage, traduction de consignes (optionnel) | LLM encadré |
 
-Une différence entre les deux systèmes peut s'expliquer sans être justifiée par
-le mapping. Le **moteur d'hypothèses** (`config/hypotheses.yaml`) teste, pour
-chaque anomalie, un catalogue fermé d'explications génériques : permutation
-entre deux employés, valeur d'un autre enregistrement de l'historique du poste,
-autre colonne source confirmée sur toute la population, interprétation
-alternative, recodage systématique, écart systémique, type d'affectation absent.
-Il s'agit d'un raisonnement abductif symbolique : reproductible, sans
-apprentissage ni appel externe, et qui **ne modifie jamais un verdict** (un
-test vérifie que les verdicts sont identiques avec et sans analyse).
+Les verdicts sont fixés aux niveaux 2 (règles) ou par l'expert (rétroaction) ;
+les niveaux 3 et 4 les expliquent et les priorisent sans jamais les modifier.
+Détails : [architecture](docs/ARCHITECTURE.md), [règles](docs/REGLES.md),
+[utilisation de l'IA](docs/IA.md).
 
-Le **score de priorité** (`config/scoring.yaml`) combine la criticité du champ,
-la confiance du verdict et des modificateurs liés aux hypothèses vérifiées ;
-son calcul est publié avec chaque verdict. Les erreurs isolées et certaines
-(permutation, affectation absente) passent devant les artefacts systémiques
-(anonymisation des courriels et des libellés d'emploi), à traiter une seule fois.
+## L'IA dans CorroborAI
 
-## Couche LLM encadrée (optionnelle)
+L'IA intervient à deux niveaux distincts, chacun là où une règle statique ne
+suffit pas :
+
+- **Moteur d'hypothèses** (toujours actif) — catalogue fermé d'hypothèses
+  génériques testées sur chaque anomalie, avec preuves ; reproductible et sans
+  appel externe. C'est lui qui identifie les causes probables et les règles
+  candidates.
+- **LLM encadré** (optionnel, `--ia`) — rédaction et triage sous un harnais
+  strict : dossier pseudonymisé, schéma de sortie sans champ de verdict,
+  preuves et valeurs citées vérifiées dans les données, repli sur un gabarit
+  déterministe, journal d'audit `out/audit_ia.jsonl`.
+
+| Mode | Commande | Données |
+|---|---|---|
+| Gabarit (défaut) | `corroborai run … --ia` | aucun LLM, hors ligne |
+| Gemini | `GEMINI_API_KEY=… corroborai run … --ia --fournisseur gemini` | pseudonymisées, contrôle anti-fuite avant envoi |
+| Local | `corroborai run … --ia --fournisseur local` | restent sur le poste |
+
+Les fournisseurs se configurent dans `config/llm.yaml` (tout service compatible
+avec l'API OpenAI peut y être ajouté). Aucun modèle n'est entraîné : le
+[document IA](docs/IA.md) explique ce choix.
+
+## Rétroaction experte
+
+Depuis l'interface (onglets « À investiguer » et « Rétroaction experte »),
+l'expert peut :
+
+- **corriger un verdict** — la correction porte une empreinte des valeurs
+  jugées et devient « périmée » si les données changent ;
+- **créer une règle** dans un mini-langage fermé de quatre opérations qui
+  reconnaissent des écarts comme acceptables — depuis une règle candidate, un
+  formulaire, une règle suggérée à partir de ses corrections, ou une consigne en
+  langage naturel traduite par le LLM. Toute règle est **exécutée à blanc**
+  avant acceptation.
+
+La rétroaction est enregistrée dans `feedback/retroaction.yaml` (créé à la
+première décision) et réappliquée par `--retroaction`. Un exemple est fourni :
 
 ```bash
-corroborai run --data-dir data --out out --ia                         # gabarit déterministe (défaut, hors ligne)
-GEMINI_API_KEY=... corroborai run --data-dir data --out out --ia --fournisseur gemini
-corroborai run --data-dir data --out out --ia --fournisseur local     # Ollama / LM Studio / llama.cpp / vLLM
+corroborai run --data-dir data --out out --retroaction feedback/exemple_retroaction.yaml
 ```
 
-Le LLM n'intervient **que** là où aucune règle ne peut le remplacer :
-une **synthèse globale** des motifs pour l'équipe fonctionnelle, une
-**synthèse par employé** (seulement si une anomalie non systémique atteint le
-seuil de priorité), et le **triage** d'une anomalie qu'aucune hypothèse
-déterministe n'explique (piste explicitement marquée « non vérifiée »).
+## Référence de la ligne de commande
 
-Le harnais (`src/corroborai/ai/`) garantit que :
+| Commande | Rôle |
+|---|---|
+| `corroborai check --data-dir DIR` | fichiers reconnus, colonnes requises, cohérence des règles avec les données |
+| `corroborai run --data-dir DIR --out OUT` | corroboration complète, rapport Excel et CSV |
+| `corroborai app` | interface web (Streamlit) |
+| `corroborai rules [--markdown -o FICHIER]` | liste ou documente les règles codifiées |
 
-- le modèle **n'a aucun outil** : un appel = un dossier → un JSON ;
-- la sortie suit un **schéma strict** sans aucun champ de verdict — l'IA ne peut
-  structurellement pas modifier un verdict ni une priorité (testé avec un modèle
-  malveillant simulé) ;
-- chaque preuve et référence citée existe dans le dossier, et toute date, tout
-  nombre, tout jeton d'employé ou toute valeur citée dans un texte y figure
-  (contrôle anti-hallucination) ;
-- en cas d'échec : une nouvelle tentative avec la liste des erreurs, puis
-  **repli sur un gabarit déterministe** ; le rapport indique toujours la source
-  de chaque explication (`LLM` ou `GABARIT`) et le statut du harnais ;
-- le contenu des données est encadré et neutralisé contre l'injection de prompt ;
-- les réponses sont mises en cache (réexécution reproductible, sans clé) et
-  **revalidées à chaque lecture** ;
-- chaque appel est consigné dans `out/audit_ia.jsonl` (charge pseudonymisée,
-  réponse brute, erreurs, décision de flux) ; la clé d'API n'y figure jamais.
+Options de `run` :
 
-### Protection des données : politique de flux
+| Option | Effet |
+|---|---|
+| `--interpretation ID=CHOIX` | force une interprétation alternative (répétable), ex. `INT-ASSIGN-DATES=strict_literal` |
+| `--retroaction FICHIER` | applique la rétroaction experte |
+| `--ia` · `--fournisseur NOM` · `--cache-ia DIR` | active la couche LLM, choisit le fournisseur, réutilise les réponses validées |
+| `--manifeste-strict` | exige la conformité des fichiers à `manifest.json` |
+| `--config` · `--rules` · `--llm-config` | chemins de configuration alternatifs |
 
-Inspirée du contrôle de flux d'information (voir
-[OpenAPPA](https://github.com/archestra-ai/OpenAPPA) pour le cas des agents
-munis d'outils), une **politique de flux déclarative** (`config/llm.yaml`)
-est évaluée par une fonction pure **avant chaque envoi** :
+## Configuration
 
-- les identifiants personnels (matricules, noms, courriels, identifiants
-  numériques longs) sont remplacés par des jetons opaques (`EMP-03`) ; la
-  réidentification n'a lieu que localement, après validation ;
-- chaque élément du dossier porte une classe de donnée ; un élément **non
-  classifié bloque l'envoi** (fermé par défaut) ;
-- vers un fournisseur **externe**, la charge sérialisée est balayée : tout
-  identifiant brut connu ou motif d'identifiant bloque l'appel (bascule sur le
-  gabarit) ;
-- un fournisseur déclaré « local » dont l'adresse n'est pas une adresse de
-  bouclage est automatiquement traité comme externe.
+| Fichier | Contenu |
+|---|---|
+| `config/datasets.yaml` | fichiers d'entrée, colonnes requises, fichiers facultatifs |
+| `config/rules.yaml` | mapping codifié : règles, interprétations, criticités, appariement |
+| `config/hypotheses.yaml` | catalogue d'hypothèses et seuils |
+| `config/scoring.yaml` | formule et modificateurs de priorité |
+| `config/llm.yaml` | fournisseurs LLM, harnais, politique de flux de données |
 
-L'option `--fournisseur local` permet ainsi de garder toutes les données sur le
-poste pour des données réellement sensibles.
-
-## Règles métier
-
-Le mapping est codifié dans [`config/rules.yaml`](config/rules.yaml) : pour
-chaque champ, la règle appliquée, l'interprétation retenue en cas
-d'ambiguïté, la criticité justifiée et la référence exacte de la ligne de
-`Mapping.xlsx`. La documentation lisible [`docs/REGLES.md`](docs/REGLES.md)
-est générée depuis ce fichier (un test échoue si elle est périmée).
-
-La configuration est validée à deux niveaux :
-
-- **interne** : types de règles connus, criticités, interprétations
-  référencées, tables de transcodage sans chevauchement ;
-- **contre les données** : colonnes existantes, chaque référence pointe vers
-  une ligne de `Mapping.xlsx` qui mentionne le champ, chaque champ cible du
-  mapping est corroboré ou explicitement exclu, et les correspondances des
-  colonnes de jointure sont vérifiées empiriquement.
+Chaque fichier est validé au chargement ; une incohérence est signalée avec sa
+cause. Après une modification de `rules.yaml`, régénérer la documentation :
+`corroborai rules --markdown -o docs/REGLES.md`.
 
 ## Tests
 
 ```bash
-pytest                                    # ou : python -m unittest discover -s tests -t .
-CORROBORAI_DATA_DIR=/autre/chemin pytest  # si les données sont ailleurs
+pip install -e ".[dev,app]"
+pytest
 ```
 
-Les tests d'intégration sont ignorés si les données sont absentes. L'interface
-est testée de bout en bout contre un module Streamlit simulé, et avec l'outil
-officiel `AppTest` lorsque Streamlit est installé. Les tests
-d'altération travaillent sur une copie temporaire, jamais sur les originaux.
+La suite couvre chaque règle, l'appariement, le moteur d'hypothèses, le
+harnais IA (y compris face à un modèle malveillant simulé et contre des
+serveurs HTTP locaux), la rétroaction, le rapport et l'interface. Elle
+s'appuie sur un **jeu de données synthétique** conçu scénario par scénario
+(`tests/fixtures/dataset.py`, généré en Excel et en CSV) et s'exécute donc
+partout. Les tests qui figent les résultats des fichiers du défi ne
+s'exécutent que si ces fichiers, reconnus par leurs empreintes, sont présents
+(`CORROBORAI_DATA_DIR`, par défaut `data/`).
 
-## Structure
+## Structure du projet
 
 ```
-config/datasets.yaml        registre des fichiers d'entrée et colonnes requises
-config/rules.yaml           mapping codifié (règles, interprétations, criticités)
-config/hypotheses.yaml      catalogue d'hypothèses et seuils
-config/scoring.yaml         formule et modificateurs de priorité
-config/llm.yaml             fournisseurs LLM, harnais, politique de flux
-feedback/retroaction.yaml   rétroaction experte enregistrée (créé par l'interface)
-docs/REGLES.md              documentation des règles (générée)
-src/corroborai/models.py    modèle Finding / Verdict / Evidence
-src/corroborai/io/          chargement en lecture seule, intégrité, normalisation
-src/corroborai/rules_config.py   chargement et validation de rules.yaml
-src/corroborai/rules_doc.py      génération de docs/REGLES.md
-src/corroborai/matching.py       appariement des affectations
-src/corroborai/rules/            règles déterministes (dates, situation, courriel…)
-src/corroborai/engine.py         moteur de corroboration
-src/corroborai/analysis/         moteur d'hypothèses et score de priorité
-src/corroborai/ai/               couche LLM encadrée (politique, schémas, harnais, tâches)
-src/corroborai/feedback.py       rétroaction experte (corrections, mini-langage de règles)
-src/corroborai/service.py        couche de service de l'interface
-src/corroborai/report/           rapport Excel + CSV
-app/streamlit_app.py             interface web
-src/corroborai/cli.py       interface en ligne de commande
-tests/
+app/streamlit_app.py      interface web
+config/                   règles, hypothèses, priorité, LLM, fichiers d'entrée
+data/                     fichiers d'extraction (non versionnés)
+docs/                     documentation
+feedback/                 rétroaction experte (exemple fourni)
+src/corroborai/
+├── io/                   chargement Excel/CSV, intégrité, normalisation
+├── models.py             modèle des verdicts (Finding, Evidence…)
+├── matching.py           appariement des affectations
+├── rules/                règles déterministes
+├── engine.py             moteur de corroboration
+├── analysis/             moteur d'hypothèses, score de priorité
+├── ai/                   couche LLM encadrée (politique de flux, schémas, harnais, tâches)
+├── feedback.py           rétroaction experte
+├── report/               rapport Excel et CSV
+├── service.py            logique de l'interface
+└── cli.py                ligne de commande
+tests/                    tests ; tests/fixtures/ : jeu de données synthétique
 ```
 
-## Avancement
+## Documentation
 
-- [x] Étape 1 — squelette, modèle de données, chargement + intégrité, normalisation
-- [x] Étape 2 — règles codifiées (`config/rules.yaml`)
-- [x] Étape 3 — appariement des affectations, moteur de règles, rapport Excel
-- [x] Étape 4 — détection de motifs, moteur d'hypothèses, scoring
-- [x] Étape 5 — harnais LLM (gabarit · Gemini · compatible OpenAI)
-- [x] Étape 6 — interface Streamlit, rétroaction experte
-- [ ] Étape 7 — documentation, notebook de démo
+| Document | Contenu |
+|---|---|
+| [Guide d'utilisation](docs/GUIDE_UTILISATEUR.md) | lire un verdict, investiguer, utiliser l'interface et la rétroaction |
+| [Architecture](docs/ARCHITECTURE.md) | pipeline, modèle de données, garanties, points d'extension |
+| [Règles de corroboration](docs/REGLES.md) | champs, règles, interprétations, criticités, hypothèses (généré) |
+| [Utilisation de l'IA](docs/IA.md) | moteur d'hypothèses, harnais LLM, protection des données |
+| [Hypothèses et limites](docs/HYPOTHESES_ET_LIMITES.md) | choix d'interprétation, hypothèses sur les données, limites connues |

@@ -6,7 +6,7 @@ from corroborai.engine import corroborate
 from corroborai.io.loaders import load_bundle
 from corroborai.models import Confidence, HypothesisResult, Verdict
 from corroborai.rules_config import load_rules
-from tests._helpers import DATA_DIR, requires_data
+from tests._helpers import CHALLENGE_DIR, requires_challenge_data
 from tests.test_hypotheses import finding
 
 SCFG = load_scoring(hypotheses=load_hypotheses())
@@ -48,11 +48,11 @@ class TestFormula(unittest.TestCase):
             self.assertEqual(score_finding(finding("1", "f", "A", "A", verdict=v), SCFG), (None, None))
 
 
-@requires_data
+@requires_challenge_data
 class TestRanking(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.result = corroborate(load_bundle(DATA_DIR), load_rules(), strict=True)
+        cls.result = corroborate(load_bundle(CHALLENGE_DIR), load_rules(), strict=True)
         cls.ranked = sorted((f for f in cls.result.findings if f.priority is not None),
                             key=lambda f: -f.priority)
 

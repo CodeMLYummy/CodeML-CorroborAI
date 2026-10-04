@@ -10,7 +10,7 @@ from corroborai.feedback import preview_rule
 from corroborai.io.loaders import load_bundle
 from corroborai.rules_config import load_rules
 from tests._ai_helpers import ScriptedTransport, user_text
-from tests._helpers import DATA_DIR, requires_data
+from tests._helpers import CHALLENGE_DIR, requires_challenge_data
 
 
 def answer(**kw):
@@ -22,11 +22,11 @@ def answer(**kw):
     return json.dumps(base, ensure_ascii=False)
 
 
-@requires_data
+@requires_challenge_data
 class TestTranslation(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.bundle = load_bundle(DATA_DIR)
+        cls.bundle = load_bundle(CHALLENGE_DIR)
         cls.cfg = load_rules()
         cls.result = corroborate(cls.bundle, cls.cfg, strict=True)
 

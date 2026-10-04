@@ -20,7 +20,7 @@ from corroborai.feedback import (
 from corroborai.io.loaders import load_bundle
 from corroborai.models import DecisionSource, Verdict
 from corroborai.rules_config import load_rules
-from tests._helpers import DATA_DIR, requires_data
+from tests._helpers import CHALLENGE_DIR, requires_challenge_data
 
 CFG = load_rules()
 FIELDS = set(CFG.targets)
@@ -93,11 +93,11 @@ class TestStore(unittest.TestCase):
             s.add_rule(dup, FIELDS)
 
 
-@requires_data
+@requires_challenge_data
 class TestApplication(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.bundle = load_bundle(DATA_DIR)
+        cls.bundle = load_bundle(CHALLENGE_DIR)
 
     def base(self, store=None):
         return corroborate(self.bundle, CFG, strict=True, feedback=store)
@@ -199,7 +199,7 @@ class TestApplication(unittest.TestCase):
             p = store.save(Path(tmp) / "r.yaml")
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
-                code = main(["run", "--data-dir", str(DATA_DIR), "--out", tmp, "--retroaction", str(p)])
+                code = main(["run", "--data-dir", str(CHALLENGE_DIR), "--out", tmp, "--retroaction", str(p)])
             self.assertEqual(code, 0)
             self.assertIn("Rétroaction experte : 22", out.getvalue())
 

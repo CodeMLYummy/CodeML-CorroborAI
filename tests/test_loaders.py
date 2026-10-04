@@ -1,3 +1,5 @@
+"""Chargement : formats Excel et CSV, manifeste informatif, preuve de non-modification."""
+
 import json
 import os
 import tempfile
@@ -13,10 +15,12 @@ from corroborai.io.loaders import (
     FileStatus,
     load_bundle,
     name_key,
+    read_csv_bytes,
     sha256_bytes,
     unpack_packed_csv,
 )
-from tests._helpers import DATA_DIR, copy_data, requires_data
+from tests._helpers import CHALLENGE_DIR, fixture_dir, fresh_fixture, requires_challenge_data
+from tests.fixtures import dataset
 
 
 class TestPureHelpers(unittest.TestCase):
@@ -25,150 +29,180 @@ class TestPureHelpers(unittest.TestCase):
                          name_key("Motif_de_la_situation_demploi.xlsx"))
         nfd = unicodedata.normalize("NFD", "détail_du_poste.xlsx")
         self.assertEqual(name_key(nfd), name_key("détail_du_poste.xlsx"))
-        self.assertNotEqual(name_key("Employe_Source.xlsx"), name_key("Employe_Destination.xlsx"))
 
     def test_unpack_packed_csv(self):
-        packed = pd.DataFrame({"a,b,c": ["1,2,3", "4,,6"]})
-        out = unpack_packed_csv(packed)
+        out = unpack_packed_csv(pd.DataFrame({"a,b,c": ["1,2,3", "4,,6"]}))
         self.assertEqual(list(out.columns), ["a", "b", "c"])
-        self.assertEqual(out.iloc[0].tolist(), ["1", "2", "3"])
         self.assertTrue(pd.isna(out.iloc[1]["b"]))
-
-    def test_unpack_noop_on_regular_table(self):
         df = pd.DataFrame({"a": ["1"], "b": ["2"]})
         self.assertIs(unpack_packed_csv(df), df)
 
-
-@requires_data
-class TestLoadRealData(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.bundle = load_bundle(DATA_DIR)
-
-    def test_integrity_ok(self):
-        self.assertTrue(self.bundle.integrity.ok)
-        self.assertEqual(self.bundle.integrity.failures(), [])
-
-    def test_renamed_file_resolved_by_content(self):
-        motifs = next(c for c in self.bundle.integrity.checks if c.logical_name == "motifs")
-        self.assertIn(motifs.status, (FileStatus.OK, FileStatus.OK_RENAMED))
-        self.assertEqual(motifs.actual_sha256, motifs.expected_sha256)
-
-    def test_optional_missing_is_warning_only(self):
-        for w in self.bundle.integrity.warnings():
-            self.assertFalse(w.required)
-
-    def test_shapes(self):
-        self.assertEqual(len(self.bundle.source.df), 23)
-        self.assertEqual(len(self.bundle.target.df), 22)
-        self.assertEqual(len(self.bundle.poste_detail.df), 114)
-        self.assertEqual(len(self.bundle.motifs.df), 92)
-        self.assertEqual(self.bundle.source.df["Matricule"].nunique(), 20)
-        self.assertEqual(set(self.bundle.source.df["Matricule"]),
-                         set(self.bundle.target.df["personId"]))
-
-    def test_mapping_sheets(self):
-        self.assertIn("Mapping", self.bundle.mapping)
-        self.assertIn("Règles situation d'emploi", self.bundle.mapping)
-        self.assertEqual(len(self.bundle.mapping), 4)
-
-    def test_poste_detail_unpacked(self):
-        df = self.bundle.poste_detail.df
-        self.assertIn("IdentifiantPoste", df.columns)
-        self.assertIn("HeuresSemaineContrat", df.columns)
-        self.assertEqual(df.shape[1] - 1, 11)  # sans _row
-        # Les champs vides du CSV deviennent None
-        self.assertIsNone(df.loc[df["IdentifiantPoste"] == "31109", "MatriculeGestionnaire"].iloc[0])
-
-    def test_row_locator(self):
-        for t in (self.bundle.source, self.bundle.target, self.bundle.poste_detail, self.bundle.motifs):
-            with self.subTest(table=t.name):
-                self.assertEqual(t.df[ROW_COL].iloc[0], 2)
-                self.assertEqual(t.df[ROW_COL].iloc[-1], len(t.df) + 1)
-
-    def test_values_kept_raw_as_strings(self):
-        src = self.bundle.source.df
-        self.assertEqual(src["Matricule"].iloc[0], "1545850")
-        self.assertIsInstance(src["CodeRaisonStatut"].iloc[0], str)
-        self.assertIsNone(src["DateSortiePoste"].iloc[0])
-        # Le chargeur ne corrige rien : le mojibake d'origine est conservé tel quel
-        statuses = set(self.bundle.target.df["detailedStatus"])
-        self.assertTrue(any("Ã" in s for s in statuses))
-
-    def test_sources_unchanged_after_load(self):
-        before = {p.name: (sha256_bytes(p.read_bytes()), p.stat().st_mtime_ns)
-                  for p in DATA_DIR.iterdir() if p.is_file()}
-        bundle = load_bundle(DATA_DIR)
-        self.assertTrue(bundle.verify_unchanged().ok)
-        after = {p.name: (sha256_bytes(p.read_bytes()), p.stat().st_mtime_ns)
-                 for p in DATA_DIR.iterdir() if p.is_file()}
-        self.assertEqual(before, after)
+    def test_csv_separator_and_encoding_detection(self):
+        for sep in (";", ",", "\t"):
+            for enc in ("utf-8-sig", "cp1252", "utf-8"):
+                data = f"Prénom{sep}Code\nÉlodie{sep}007\n".encode(enc)
+                with self.subTest(sep=sep, enc=enc):
+                    df = read_csv_bytes(data)
+                    self.assertEqual(list(df.columns), ["Prénom", "Code"])
+                    self.assertEqual(df.iloc[0].tolist(), ["Élodie", "007"])  # zéros de tête conservés
 
 
-@requires_data
-class TestIntegrityFailures(unittest.TestCase):
-    """Toutes les altérations sont faites sur une COPIE temporaire."""
+class TestFormats(unittest.TestCase):
+    def test_xlsx_and_csv_load_identically(self):
+        bx, bc = load_bundle(fixture_dir("xlsx")), load_bundle(fixture_dir("csv"))
+        for name in ("source", "target", "poste_detail", "motifs"):
+            tx, tc = getattr(bx, name).df, getattr(bc, name).df
+            with self.subTest(table=name):
+                self.assertEqual(tx.shape, tc.shape)
+                self.assertEqual(list(tx.columns), list(tc.columns))
+        self.assertEqual(bc.source.path.suffix, ".csv")
 
+    def test_row_locator_and_unpacked_detail(self):
+        b = load_bundle(fixture_dir("xlsx"))
+        for t in (b.source, b.target, b.poste_detail, b.motifs):
+            self.assertEqual(t.df[ROW_COL].iloc[0], 2)
+            self.assertEqual(t.df[ROW_COL].iloc[-1], len(t.df) + 1)
+        self.assertEqual(b.poste_detail.df.shape[1] - 1, 11)
+        self.assertIsNone(b.poste_detail.df["MatriculeGestionnaire"].iloc[0])
+
+    def test_values_kept_raw(self):
+        b = load_bundle(fixture_dir("xlsx"))
+        self.assertTrue(any("Ã" in str(v) for v in b.target.df["detailedStatus"]))  # aucune correction au chargement
+        self.assertIsInstance(b.source.df["CodeRaisonStatut"].iloc[0], str)
+
+    def test_mapping_optional(self):
+        b = load_bundle(fixture_dir("xlsx"))
+        self.assertEqual(b.mapping, {})
+        m = next(c for c in b.integrity.checks if c.logical_name == "mapping")
+        self.assertEqual((m.status, m.required), (FileStatus.ABSENT, False))
+        self.assertTrue(b.integrity.ok)
+
+
+class TestManifest(unittest.TestCase):
+    def statuses(self, b):
+        return {c.logical_name: c.status for c in b.integrity.checks if c.required}
+
+    def test_without_manifest(self):
+        b = load_bundle(fixture_dir("xlsx"))
+        self.assertFalse(b.integrity.manifest_found)
+        self.assertEqual(set(self.statuses(b).values()), {FileStatus.SANS_MANIFESTE})
+        self.assertTrue(b.integrity.ok)
+
+    def test_matching_manifest(self):
+        b = load_bundle(fixture_dir("xlsx", "match"))
+        self.assertEqual(set(self.statuses(b).values()), {FileStatus.CONFORME_MANIFESTE})
+
+    def test_different_files_same_names_are_accepted(self):
+        """Ex. jeu de test plus volumineux portant les mêmes noms que l'original."""
+        b = load_bundle(fixture_dir("xlsx", "mismatch"))
+        self.assertEqual(set(self.statuses(b).values()), {FileStatus.DIFFERENT_MANIFESTE})
+        self.assertTrue(b.integrity.ok)
+        self.assertEqual(len(b.integrity.warnings()), 5)  # 4 fichiers différents + mapping absent
+
+    def test_more_rows_than_manifest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = fresh_fixture(Path(tmp), "xlsx", "match")
+            src = d / dataset.SOURCE_FILE
+            df = pd.read_excel(src, dtype=str)
+            pd.concat([df, df.tail(1).assign(Matricule="1000099")]).to_excel(src, index=False)
+            b = load_bundle(d)
+            self.assertEqual(len(b.source.df), len(df) + 1)
+            self.assertEqual(self.statuses(b)["source"], FileStatus.DIFFERENT_MANIFESTE)
+
+    def test_strict_mode(self):
+        load_bundle(fixture_dir("xlsx", "match"), strict_manifest=True)
+        for manifest in ("mismatch", None):
+            with self.subTest(manifest=manifest), self.assertRaises(DataLoadError):
+                load_bundle(fixture_dir("xlsx", manifest), strict_manifest=True)
+
+    def test_malformed_manifest_is_ignored_with_note(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = fresh_fixture(Path(tmp))
+            (d / "manifest.json").write_text("{pas du json", encoding="utf-8")
+            b = load_bundle(d)
+            self.assertFalse(b.integrity.manifest_found)
+            self.assertTrue(b.integrity.notes)
+
+
+class TestReadOnlyProof(unittest.TestCase):
+    def test_files_unchanged_after_load(self):
+        d = fixture_dir("csv")
+        before = {p.name: (sha256_bytes(p.read_bytes()), p.stat().st_mtime_ns) for p in d.iterdir()}
+        b = load_bundle(d)
+        after_report = b.verify_unchanged()
+        self.assertTrue(after_report.ok)
+        self.assertEqual({c.status for c in after_report.checks}, {FileStatus.INCHANGE})
+        self.assertEqual(before, {p.name: (sha256_bytes(p.read_bytes()), p.stat().st_mtime_ns) for p in d.iterdir()})
+
+    def test_modification_during_processing_is_detected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = fresh_fixture(Path(tmp))
+            b = load_bundle(d)
+            (d / dataset.TARGET_FILE).write_bytes(b"altere")
+            report = b.verify_unchanged()
+            self.assertFalse(report.ok)
+            self.assertIn(FileStatus.MODIFIE, {c.status for c in report.checks})
+            (d / dataset.SOURCE_FILE).unlink()
+            self.assertIn(FileStatus.ABSENT, {c.status for c in b.verify_unchanged().checks})
+
+
+class TestFailures(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
-        self.dir = copy_data(Path(self._tmp.name))
+        self.dir = fresh_fixture(Path(self._tmp.name))
 
     def tearDown(self):
         self._tmp.cleanup()
 
-    def _file(self, prefix):
-        return next(p for p in self.dir.iterdir() if p.name.startswith(prefix))
-
-    def test_tampered_file_rejected_in_strict_mode(self):
-        p = self._file("Employe_Source")
-        data = bytearray(p.read_bytes())
-        data[-1] ^= 0xFF
-        p.write_bytes(bytes(data))
+    def test_missing_required_file(self):
+        (self.dir / dataset.POSTE_FILE).unlink()
         with self.assertRaises(DataLoadError) as ctx:
             load_bundle(self.dir)
-        self.assertIn("source", str(ctx.exception))
-
-    def test_tampered_file_reported_in_lenient_mode(self):
-        p = self._file("Employe_Destination")
-        df = pd.read_excel(p, dtype=str)
-        df.loc[0, "givenName"] = "Modifié"
-        df.to_excel(p, index=False)
-        bundle = load_bundle(self.dir, strict=False)
-        status = {c.logical_name: c.status for c in bundle.integrity.checks}
-        self.assertEqual(status["target"], FileStatus.HASH_MISMATCH)
-        self.assertFalse(bundle.integrity.ok)
-
-    def test_missing_required_file(self):
-        self._file("Mapping").unlink()
-        with self.assertRaises(DataLoadError):
-            load_bundle(self.dir)
+        self.assertIn("poste_detail", str(ctx.exception))
 
     def test_missing_required_column(self):
-        p = self._file("Employe_Source")
-        df = pd.read_excel(p, dtype=str).drop(columns=["CodePoste"])
-        df.to_excel(p, index=False)
-        manifest_path = self.dir / "manifest.json"
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        for e in manifest["files"]:
-            if e["path"] == p.name:
-                e["sha256"] = sha256_bytes(p.read_bytes())
-        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        p = self.dir / dataset.SOURCE_FILE
+        pd.read_excel(p, dtype=str).drop(columns=["CodePoste"]).to_excel(p, index=False)
         with self.assertRaises(DataLoadError) as ctx:
             load_bundle(self.dir)
         self.assertIn("CodePoste", str(ctx.exception))
 
-    def test_nfd_filename_resolved(self):
-        p = self._file("d")  # détail_du_poste
-        nfd = unicodedata.normalize("NFD", p.name)
-        if nfd == p.name:
-            self.skipTest("nom déjà en NFD")
-        os.rename(p, self.dir / nfd)
-        bundle = load_bundle(self.dir)
-        self.assertEqual(len(bundle.poste_detail.df), 114)
+    def test_unreadable_file(self):
+        (self.dir / dataset.TARGET_FILE).write_bytes(b"ceci n'est pas un classeur")
+        with self.assertRaises(DataLoadError) as ctx:
+            load_bundle(self.dir)
+        self.assertIn("illisible", str(ctx.exception))
 
-    def test_missing_data_dir(self):
+    def test_tolerant_names_and_extension(self):
+        p = self.dir / dataset.POSTE_FILE
+        os.rename(p, self.dir / unicodedata.normalize("NFD", p.name))
+        os.rename(self.dir / dataset.MOTIFS_FILE, self.dir / "Motif_de_la_situation_demploi.xlsx")
+        (self.dir / ".gitkeep").write_text("")
+        b = load_bundle(self.dir)
+        self.assertEqual(len(b.motifs.df), len(dataset.MOTIFS_ROWS))
+        note = next(c.note for c in b.integrity.checks if c.logical_name == "motifs")
+        self.assertIn("Motif_de_la_situation_demploi.xlsx", note)
+
+    def test_missing_dir(self):
         with self.assertRaises(DataLoadError):
             load_bundle(self.dir / "inexistant")
+
+
+@requires_challenge_data
+class TestChallengeData(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.bundle = load_bundle(CHALLENGE_DIR)
+
+    def test_shapes(self):
+        self.assertEqual((len(self.bundle.source.df), len(self.bundle.target.df),
+                          len(self.bundle.poste_detail.df), len(self.bundle.motifs.df)), (23, 22, 114, 92))
+        self.assertEqual(len(self.bundle.mapping), 4)
+
+    def test_manifest_if_present(self):
+        if self.bundle.integrity.manifest_found:
+            statuses = {c.status for c in self.bundle.integrity.checks if c.required}
+            self.assertEqual(statuses, {FileStatus.CONFORME_MANIFESTE})
 
 
 if __name__ == "__main__":

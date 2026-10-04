@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest import mock
 
 from corroborai.feedback import FeedbackStore
-from tests._helpers import DATA_DIR, REPO, requires_data
+from tests._helpers import CHALLENGE_DIR, REPO, requires_challenge_data
 from tests._streamlit_stub import RerunApp, StopApp, _State, make_stub
 
 APP = REPO / "app" / "streamlit_app.py"
@@ -33,12 +33,12 @@ def texts(st, kind=None):
     return " ".join(str(a[0]) for name, a, _ in st.calls if a and (kind is None or name == kind))
 
 
-@requires_data
+@requires_challenge_data
 class TestAppWithStub(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.store = str(Path(self.tmp.name) / "retroaction.yaml")
-        self.base = {"Répertoire des données": str(DATA_DIR), "Fichier de rétroaction": self.store}
+        self.base = {"Répertoire des données": str(CHALLENGE_DIR), "Fichier de rétroaction": self.store}
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -119,15 +119,15 @@ class TestAppWithStub(unittest.TestCase):
 
     def test_source_files_untouched(self):
         from corroborai.io.loaders import sha256_bytes
-        before = {p.name: sha256_bytes(p.read_bytes()) for p in DATA_DIR.iterdir() if p.is_file()}
+        before = {p.name: sha256_bytes(p.read_bytes()) for p in CHALLENGE_DIR.iterdir() if p.is_file()}
         state = self.launched()
         run_app({**self.base, "corr_reason": "ok"}, {"Enregistrer la correction"}, state)
-        after = {p.name: sha256_bytes(p.read_bytes()) for p in DATA_DIR.iterdir() if p.is_file()}
+        after = {p.name: sha256_bytes(p.read_bytes()) for p in CHALLENGE_DIR.iterdir() if p.is_file()}
         self.assertEqual(before, after)
-        self.assertFalse(any(DATA_DIR.glob("*.yaml")))
+        self.assertFalse(any(CHALLENGE_DIR.glob("*.yaml")))
 
 
-@requires_data
+@requires_challenge_data
 @unittest.skipUnless(importlib.util.find_spec("streamlit"), "Streamlit non installé")
 class TestAppWithAppTest(unittest.TestCase):
     """Exécution avec le moteur réel de Streamlit (s'exécute là où Streamlit est installé)."""
@@ -135,7 +135,7 @@ class TestAppWithAppTest(unittest.TestCase):
     def test_launch(self):
         from streamlit.testing.v1 import AppTest
 
-        with mock.patch.dict("os.environ", {"CORROBORAI_DATA_DIR": str(DATA_DIR)}):
+        with mock.patch.dict("os.environ", {"CORROBORAI_DATA_DIR": str(CHALLENGE_DIR)}):
             at = AppTest.from_file(str(APP), default_timeout=120)
             at.run()
             self.assertFalse(at.exception)

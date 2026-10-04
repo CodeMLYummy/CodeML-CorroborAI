@@ -10,7 +10,7 @@ from corroborai.matching import AssignmentPair, MatchMethod
 from corroborai.models import DecisionSource, Evidence, Finding, Verdict
 from corroborai.rules.base import Refs
 from corroborai.rules_config import load_rules
-from tests._helpers import DATA_DIR, requires_data
+from tests._helpers import CHALLENGE_DIR, requires_challenge_data
 
 CFG = load_rules()
 HCFG = load_hypotheses()
@@ -111,11 +111,11 @@ class TestFieldLevel(unittest.TestCase):
         self.assertIn("H-TYPE-ABSENT", hids(f))
 
 
-@requires_data
+@requires_challenge_data
 class TestRealData(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.bundle = load_bundle(DATA_DIR)
+        cls.bundle = load_bundle(CHALLENGE_DIR)
         cls.result = corroborate(cls.bundle, CFG, strict=True)
         cls.by = {(f.person_id, f.target_field, f.assignment_key): f for f in cls.result.findings}
 

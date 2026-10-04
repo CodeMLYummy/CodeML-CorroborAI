@@ -1,0 +1,64 @@
+# =============================================================================
+# Exemple de rétroaction experte (règles et corrections) — CorroborAI
+# =============================================================================
+# Fichier d'EXEMPLE, établi sur les fichiers du défi. Il n'est jamais appliqué
+# par défaut. Pour l'essayer :
+#     corroborai run --data-dir data --out out --retroaction feedback/exemple_retroaction.yaml
+# ou, dans l'interface, indiquer ce chemin comme « Fichier de rétroaction ».
+#
+# Les règles sont génériques ; la correction porte sur un écart précis (avec
+# l'empreinte des valeurs jugées) : sur d'autres données, elle sera signalée
+# « écart introuvable » ou « périmée » et ne sera pas appliquée.
+#
+# Le fichier de travail de l'expert, feedback/retroaction.yaml, est créé par
+# l'interface à la première correction ou règle acceptée.
+# =============================================================================
+version: 1
+rules:
+- id: R-EXPERT-001
+  operation: accept_alternative_source
+  field: dailyHoursOverride
+  params:
+    column: détail du poste (enregistrement le plus récent).HeuresJourContrat
+  reason: 'Exemple : les heures quotidiennes du système Temps proviennent du contrat
+    du poste (détail du poste), et non des heures normales de l''employé.'
+  author: Équipe fonctionnelle (exemple)
+  created: '2026-10-04T12:00:00'
+  provenance: SUGGESTION
+  original_text: ''
+  active: true
+- id: R-EXPERT-002
+  operation: accept_alternative_source
+  field: weeklyHoursOverride
+  params:
+    column: détail du poste (enregistrement le plus récent).HeuresSemaineContrat
+  reason: 'Exemple : les heures hebdomadaires du système Temps proviennent du contrat
+    du poste (détail du poste), et non des heures normales de l''employé.'
+  author: Équipe fonctionnelle (exemple)
+  created: '2026-10-04T12:00:00'
+  provenance: SUGGESTION
+  original_text: ''
+  active: true
+- id: R-EXPERT-003
+  operation: accept_hypothesis
+  field: positionName
+  params:
+    hypothesis: H-BIJECTION
+  reason: 'Exemple : les codes d''emploi du libellé ont été recodés par l''anonymisation
+    du système Temps ; le recodage est stable sur toute la population.'
+  author: Équipe fonctionnelle (exemple)
+  created: '2026-10-04T12:05:00'
+  provenance: FORMULAIRE
+  original_text: ''
+  active: true
+corrections:
+- finding_id: 1545850:P:35342:contactEmail
+  verdict: JUSTIFIE
+  reason: 'Exemple : identifiant de courriel modifié par l''anonymisation (confirmé
+    par l''organisation) ; accepté pour cet employé.'
+  fingerprint:
+    expected: pnom1545850850@loto-quebec.com
+    target_raw: dev-08-v2_PNom10370370@loto-quebec.com
+    verdict_machine: ANOMALIE
+  author: Équipe fonctionnelle (exemple)
+  created: '2026-10-04T12:10:00'

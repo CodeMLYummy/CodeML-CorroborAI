@@ -7,7 +7,7 @@ import pandas as pd
 from corroborai.io.loaders import ROW_COL, load_bundle
 from corroborai.matching import MatchMethod, match_assignments, similarity
 from corroborai.rules_config import load_rules
-from tests._helpers import DATA_DIR, requires_data
+from tests._helpers import CHALLENGE_DIR, requires_challenge_data
 
 CFG = load_rules()
 
@@ -78,11 +78,11 @@ class TestMatchingSynthetic(unittest.TestCase):
         self.assertEqual(similarity(CFG, s, t), 1.0)
 
 
-@requires_data
+@requires_challenge_data
 class TestMatchingRealData(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.bundle = load_bundle(DATA_DIR)
+        cls.bundle = load_bundle(CHALLENGE_DIR)
 
     def test_pairs(self):
         pairs = match_assignments(self.bundle, CFG)

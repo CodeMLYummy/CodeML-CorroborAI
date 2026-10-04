@@ -12,23 +12,30 @@ from corroborai.rules_config import RulesConfigError, load_rules, validate_again
 from corroborai.rules_doc import documentation_markdown
 
 
+def _print_integrity(bundle) -> None:
+    integ = bundle.integrity
+    print("Fichiers d'entrée" + ("" if integ.manifest_found else " (aucun manifest.json : empreintes non comparées)"))
+    for rec in integ.to_records():
+        flag = "requis " if rec["requis"] else "option."
+        note = f"  — {rec['note']}" if rec["note"] else ""
+        print(f"  [{rec['statut']:<27}] {flag} {rec['fichier_logique']:<13} {rec['fichier_lu']}{note}")
+    for n in integ.notes:
+        print(f"  [NOTE] {n}")
+
+
 def _cmd_check(args: argparse.Namespace) -> int:
     try:
-        bundle = load_bundle(args.data_dir, args.config, strict=not args.no_strict)
+        bundle = load_bundle(args.data_dir, args.config, strict_manifest=args.manifeste_strict)
     except DataLoadError as exc:
         print(f"ERREUR : {exc}", file=sys.stderr)
         return 2
 
-    print("Contrôle d'intégrité (manifest.json)")
-    for rec in bundle.integrity.to_records():
-        flag = "requis " if rec["requis"] else "option."
-        lu = f" -> {rec['fichier_lu']}" if rec["fichier_lu"] and rec["fichier_lu"] != rec["manifest"] else ""
-        print(f"  [{rec['statut']:<20}] {flag} {rec['manifest'] or rec['fichier_logique']}{lu}")
+    _print_integrity(bundle)
     print("\nTables chargées")
     for t in (bundle.source, bundle.target, bundle.poste_detail, bundle.motifs):
-        print(f"  {t.name:<13} {t.df.shape[0]:>4} lignes × {t.df.shape[1] - 1:>3} colonnes  ({t.path.name})")
-    print(f"  {'mapping':<13} {len(bundle.mapping):>4} feuilles: {', '.join(bundle.mapping)}")
-
+        print(f"  {t.name:<13} {t.df.shape[0]:>5} lignes × {t.df.shape[1] - 1:>3} colonnes  ({t.path.name})")
+    if bundle.mapping:
+        print(f"  {'mapping':<13} {len(bundle.mapping):>5} feuilles: {', '.join(bundle.mapping)}")
     print("\nRègles (rules.yaml)")
     try:
         cfg = load_rules(args.rules)
@@ -42,7 +49,7 @@ def _cmd_check(args: argparse.Namespace) -> int:
         print(f"  [ERREUR] {e}")
     for w in res.warnings:
         print(f"  [AVERT.] {w}")
-    return 0 if bundle.integrity.ok and res.ok else 1
+    return 0 if res.ok else 1
 
 
 def _cmd_rules(args: argparse.Namespace) -> int:
@@ -83,7 +90,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
     from corroborai.report import write_csv, write_report
 
     try:
-        bundle = load_bundle(args.data_dir, args.config)
+        bundle = load_bundle(args.data_dir, args.config, strict_manifest=args.manifeste_strict)
         cfg = load_rules(args.rules)
         res = validate_against_data(cfg, bundle)
         if not res.ok:
@@ -94,7 +101,11 @@ def _cmd_run(args: argparse.Namespace) -> int:
         if args.retroaction:
             from corroborai.feedback import FeedbackStore
 
+            from corroborai.feedback import store_status
+
             store = FeedbackStore.load(args.retroaction, set(cfg.targets))
+            if (status := store_status(store)) is not None:
+                print(f"AVERTISSEMENT : {status}", file=sys.stderr)
         result = corroborate(bundle, cfg, _parse_overrides(args.interpretation), feedback=store)
     except (DataLoadError, RulesConfigError, ValueError) as exc:
         print(f"ERREUR : {exc}", file=sys.stderr)
@@ -119,9 +130,11 @@ def _cmd_run(args: argparse.Namespace) -> int:
           f"{sum(p.matched for p in result.pairs)} affectations appariées sur {len(result.pairs)}")
     for v in ("ANOMALIE", "INDETERMINE", "JUSTIFIE", "CONFORME"):
         print(f"  {v:<12} {counts[v]:>4}")
-    print(f"Intégrité des fichiers sources après traitement : "
-          f"{'OK' if result.integrity_after.ok else 'ÉCHEC'}")
-    if result.feedback is not None:
+    print(f"Fichiers sources après traitement : "
+          f"{'inchangés (empreintes identiques)' if result.integrity_after.ok else 'MODIFIÉS — ÉCHEC'}")
+    for w in bundle.integrity.warnings():
+        print(f"  [AVERT.] {w.logical_name} : {w.status.value}{f' — {w.note}' if w.note else ''}")
+    if result.feedback is not None and result.feedback.store is not None and result.feedback.store.exists:
         fb = result.feedback
         print(f"Rétroaction experte : {sum(len(x) for x in fb.rules_applied.values())} écart(s) par règle, "
               f"{len(fb.corrections_applied)} correction(s), {len(fb.corrections_stale)} périmée(s)")
@@ -153,8 +166,8 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument("--data-dir", type=Path, default=Path("data"))
     check.add_argument("--config", type=Path, default=None, help="Chemin de datasets.yaml")
     check.add_argument("--rules", type=Path, default=None, help="Chemin de rules.yaml")
-    check.add_argument("--no-strict", action="store_true",
-                       help="Continuer malgré un échec d'intégrité (déconseillé)")
+    check.add_argument("--manifeste-strict", action="store_true",
+                       help="Exiger que chaque fichier requis soit conforme à manifest.json")
     check.set_defaults(func=_cmd_check)
 
     run = sub.add_parser("run", help="Exécute la corroboration et produit le rapport")
@@ -164,6 +177,8 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--rules", type=Path, default=None, help="Chemin de rules.yaml")
     run.add_argument("--interpretation", action="append", metavar="ID=CHOIX",
                      help="Force une interprétation (ex. INT-ASSIGN-DATES=strict_literal)")
+    run.add_argument("--manifeste-strict", action="store_true",
+                     help="Exiger que chaque fichier requis soit conforme à manifest.json")
     run.add_argument("--retroaction", type=Path, default=None,
                      help="Fichier de rétroaction experte (règles et corrections) à appliquer")
     run.add_argument("--ia", action="store_true", help="Active la couche LLM encadrée (synthèses, triage)")
