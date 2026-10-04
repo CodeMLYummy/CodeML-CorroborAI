@@ -22,8 +22,27 @@ Les noms sont résolus de façon tolérante (accents, apostrophes, NFC/NFD) ; en
 cas de renommage, c'est l'empreinte qui fait foi.
 
 ```bash
-corroborai check --data-dir data
+corroborai check --data-dir data      # intégrité des fichiers + validation des règles
+corroborai rules                      # liste des champs corroborés
+corroborai rules --markdown -o docs/REGLES.md   # régénère la documentation des règles
 ```
+
+## Règles métier
+
+Le mapping est codifié dans [`config/rules.yaml`](config/rules.yaml) : pour
+chaque champ, la règle appliquée, l'interprétation retenue en cas
+d'ambiguïté, la criticité justifiée et la référence exacte de la ligne de
+`Mapping.xlsx`. La documentation lisible [`docs/REGLES.md`](docs/REGLES.md)
+est générée depuis ce fichier (un test échoue si elle est périmée).
+
+La configuration est validée à deux niveaux :
+
+- **interne** : types de règles connus, criticités, interprétations
+  référencées, tables de transcodage sans chevauchement ;
+- **contre les données** : colonnes existantes, chaque référence pointe vers
+  une ligne de `Mapping.xlsx` qui mentionne le champ, chaque champ cible du
+  mapping est corroboré ou explicitement exclu, et les correspondances des
+  colonnes de jointure sont vérifiées empiriquement.
 
 ## Tests
 
@@ -39,8 +58,12 @@ d'altération travaillent sur une copie temporaire, jamais sur les originaux.
 
 ```
 config/datasets.yaml        registre des fichiers d'entrée et colonnes requises
+config/rules.yaml           mapping codifié (règles, interprétations, criticités)
+docs/REGLES.md              documentation des règles (générée)
 src/corroborai/models.py    modèle Finding / Verdict / Evidence
 src/corroborai/io/          chargement en lecture seule, intégrité, normalisation
+src/corroborai/rules_config.py   chargement et validation de rules.yaml
+src/corroborai/rules_doc.py      génération de docs/REGLES.md
 src/corroborai/cli.py       interface en ligne de commande
 tests/
 ```
@@ -48,7 +71,7 @@ tests/
 ## Avancement
 
 - [x] Étape 1 — squelette, modèle de données, chargement + intégrité, normalisation
-- [ ] Étape 2 — règles codifiées (`config/rules.yaml`)
+- [x] Étape 2 — règles codifiées (`config/rules.yaml`)
 - [ ] Étape 3 — appariement des affectations, moteur de règles, rapport Excel
 - [ ] Étape 4 — détection de motifs, moteur d'hypothèses, scoring
 - [ ] Étape 5 — harnais LLM (gabarit · Gemini · compatible OpenAI)

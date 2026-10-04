@@ -1,0 +1,476 @@
+# =============================================================================
+# CorroborAI — Mapping codifié (Système A – RH  →  Système B – Temps)
+# =============================================================================
+# Source d'autorité : Mapping.xlsx. Chaque champ référence sa ligne d'origine
+# (mapping_ref = "<feuille>!<ligne Excel>"). Un test vérifie que chaque
+# référence pointe bien vers une ligne qui mentionne le champ cible.
+#
+# Les ambiguïtés du texte des règles sont résolues par des « interprétations »
+# nommées (section interpretations), documentées et paramétrables.
+#
+# Criticité (1–5) : impact métier d'un écart sur la gestion des horaires et du
+# temps. 5 = impact direct sur la paie / la planification ; 1 = cosmétique.
+# =============================================================================
+
+version: 1
+
+# -----------------------------------------------------------------------------
+# Correspondance des colonnes de jointure
+# Les extractions anonymisées n'utilisent pas les libellés de Mapping.xlsx ;
+# la correspondance ci-dessous est établie à partir des feuilles « Jointure »
+# et validée empiriquement (voir tests/test_rules_config.py).
+# -----------------------------------------------------------------------------
+joins:
+  poste_detail:
+    mapping_ref: "Jointure - Détail du poste!2"
+    columns:
+      poste:        {table: IdentifiantPoste,       source: CodePoste,     label: "Numéro du poste"}
+      emploi:       {table: IdentifiantEmploi,      source: CodeEmploi,    label: "Numéro de l'emploi"}
+      unite_admin:  {table: CodeDirectionAffectée,  source: CodeDirection, label: "Code d'unité administrative"}
+      date_effet:   {table: DateEffetAffectation,   source: null,          label: "Date d'effet", excel_serial: true}
+  motifs:
+    mapping_ref: "Jointure - Motif des situations!2"
+    columns:
+      situation:    {table: CodeCatégorieStatut,      source: CodeRaisonStatut,    label: "Code de la situation d'emploi"}
+      remphor:      {table: CodeStatutSystèmeExterne, source: null,                label: "Code de la situation d'emploi de Remphor"}
+      acces:        {table: CodeGestionAccès,         source: CodeSuspensionAccès, label: "Code de traitement des accès"}
+
+# -----------------------------------------------------------------------------
+# Libellés de la colonne « Système A » de Mapping.xlsx qui ne sont pas des noms
+# de colonnes littéraux de l'extraction source.
+# -----------------------------------------------------------------------------
+source_label_aliases:
+  "Adresse courriel travail": null        # absente de l'extraction : le courriel est calculé (R-EMAIL)
+  "EMPT_CD": CatégorieEmploi               # nommée EMPTP_CD dans le texte de la règle
+  "EstPermanent (PERM_IND)": EstPermanent
+  "EstTempsPlein(FT_IND)": EstTempsPlein
+  "-": null                                # champ dérivé (detailedStatus)
+
+# -----------------------------------------------------------------------------
+# Interprétations retenues pour les ambiguïtés
+# -----------------------------------------------------------------------------
+interpretations:
+  INT-ASSIGN-DATES:
+    choice: interval_intersection
+    alternatives: [strict_literal]
+    summary: >-
+      Les règles de début et de fin décrivent l'intersection de deux intervalles :
+      [entrée, sortie du poste] ∩ [début, fin de l'unité administrative courante].
+      Début = MAX des deux débuts ; fin = MIN des deux fins.
+    rationale: >-
+      Le texte dit « date la plus ancienne » pour le début. Appliqué littéralement,
+      il retourne la date de création du poste (historique du poste, pas de
+      l'employé) et met la quasi-totalité de la cible en écart. La règle de fin
+      prend la plus ancienne des fins, ce qui n'est cohérent qu'avec une
+      intersection. L'interprétation littérale reste disponible (strict_literal)
+      et le rapport publie le taux d'accord des deux.
+
+  INT-EMAIL:
+    choice: decomposed
+    alternatives: [strict]
+    summary: >-
+      Courriel attendu = minuscule(sans_accents(1re lettre du prénom + nom))
+      + 3 derniers chiffres du matricule + "@loto-quebec.com".
+      Comparaison par composantes : préfixe, initiale, nom, chiffres, domaine.
+    rationale: >-
+      « Code » est interprété comme le matricule (« Code de l'employé » ↔
+      Matricule dans Mapping.xlsx). La casse n'est pas significative dans une
+      adresse courriel. Un préfixe d'environnement (ex. « dev-08-v2_ ») seul
+      est un écart justifié ; un identifiant incohérent avec le matricule est
+      une anomalie (confirmé par les organisatrices : artefact d'anonymisation
+      à signaler).
+    params:
+      domain: "loto-quebec.com"
+      digits_from_id: 3
+      case_insensitive: true
+      strip_accents: true
+      env_prefix_pattern: "^[A-Za-z0-9-]+_"
+
+  INT-NAME-ACCENTS:
+    choice: accent_tolerant
+    alternatives: [strict]
+    summary: >-
+      La règle « Enlever les accents pour le nom et prénom » s'applique au
+      courriel. Pour givenName/surname, une différence uniquement d'accents est
+      un écart justifié (confiance moyenne) ; toute autre différence est une anomalie.
+    rationale: >-
+      La position de la règle (sous le courriel) est ambiguë. Cette
+      interprétation couvre les deux lectures sans masquer de vraie différence.
+
+  INT-CONCAT-PADDING:
+    choice: zero_padded
+    alternatives: [unpadded]
+    summary: >-
+      Concaténations « code-libellé » : le code est complété de zéros à gauche
+      (5 positions pour l'unité administrative, 4 pour l'emploi).
+    rationale: >-
+      Format observé uniformément dans la cible (ex. « 00397-UnitAdmin00397 »).
+      Le texte de la règle ne précise pas le format du code.
+
+  INT-SITUATION-CODE:
+    choice: code_suspension_acces
+    alternatives: [code_statut_emploi, motif_code_gestion_acces]
+    summary: >-
+      Le « Code de traitement des accès » de la table de situation d'emploi est
+      lu dans CodeSuspensionAccès. Les codes sont comparés numériquement
+      (« 00 » ≡ « 0 »). CodeStatutEmploi et le CodeGestionAccès du motif sont
+      vérifiés en contrôle croisé ; une incohérence est ajoutée comme preuve.
+    rationale: >-
+      La feuille « Jointure - Motif des situations » identifie explicitement
+      CodeSuspensionAccès comme le code de traitement des accès, qui est la clé
+      de la feuille « Règles situation d'emploi ».
+
+  INT-SITUATION-UNLISTED:
+    choice: indetermine
+    alternatives: []
+    summary: >-
+      Un code de situation absent de la table (ex. une cessation) ne permet pas
+      de calculer de valeur attendue : verdict INDETERMINE.
+    rationale: >-
+      Mapping.xlsx mentionne « cessation » mais ne fournit pas sa règle.
+
+  INT-MOTIF-MISSING:
+    choice: indetermine
+    alternatives: []
+    summary: >-
+      Absence (codes 02, 03, 06, 07) dont le motif est introuvable dans la table
+      des motifs : statusReasonCode attendu inconnu, verdict INDETERMINE.
+    rationale: >-
+      La table des motifs ne couvre pas tous les codes (ex. 697, 703, 651) ;
+      ce n'est pas bloquant pour les actifs, qui n'exigent pas de motif.
+
+  INT-CONTRACT-UNMATCHED:
+    choice: indetermine
+    alternatives: []
+    summary: >-
+      Combinaison catégorie / permanent / temps plein non couverte par le
+      tableau de transcodage : verdict INDETERMINE.
+    rationale: >-
+      Ex. CatégorieEmploi = V avec EstPermanent = Non n'a pas de règle.
+
+  INT-EMPTY:
+    choice: empty_equals_empty
+    alternatives: []
+    summary: >-
+      Deux valeurs vides (après normalisation) sont conformes ; une seule valeur
+      vide est un écart.
+    rationale: Les vides ont des représentations variées (NaN, "", NaT).
+
+# -----------------------------------------------------------------------------
+# Tables de règles
+# -----------------------------------------------------------------------------
+
+# Transcodage du type d'employé (Mapping!24). Les conditions ne se chevauchent
+# pas : le résultat ne dépend pas de l'ordre (vérifié par test).
+contract_types:
+  - {when: {CatégorieEmploi: V, EstPermanent: true, EstTempsPlein: true},  code: JWN,  label: "Permanent temps plein"}
+  - {when: {CatégorieEmploi: V, EstPermanent: true, EstTempsPlein: false}, code: XFLR, label: "Permanent temps partiel"}
+  - {when: {CatégorieEmploi: T}, code: KELH, label: "Surnuméraire avec vacances"}
+  - {when: {CatégorieEmploi: O}, code: WHX,  label: "Occasionnel - Surnuméraire"}
+  - {when: {CatégorieEmploi: M}, code: CEGQ, label: "Occasionnel avec avantages"}
+  - {when: {CatégorieEmploi: R}, code: CNZC, label: "Surnuméraire avec avantages"}
+  - {when: {CatégorieEmploi: J}, code: RMQ,  label: "Saisonnier"}
+  - {when: {CatégorieEmploi: Z}, code: JAW,  label: "Aspirant croupier"}
+  - {when: {CatégorieEmploi: Q}, code: TRSY, label: "Stagiaire"}
+
+# Situation d'emploi (feuille « Règles situation d'emploi »).
+situations:
+  - codes: [0, 1]
+    label: "Actif"
+    reason_code: none            # statusReasonCode attendu vide
+    return_date: none            # expectedReturnDate attendu vide
+    mapping_ref: "Règles situation d'emploi!2"
+  - codes: [2, 3, 6, 7]
+    label: "Absence complète"
+    reason_code: motif_remphor   # code Remphor du motif (jointure motifs)
+    return_date: source          # DateRetourAnticipée
+    mapping_ref: "Règles situation d'emploi!3"
+
+# Type d'affectation (Mapping!41–45) : TypeAffectation → (primaire, temporaire)
+assignment_types:
+  P: {isPrimaryAssignment: true,  isTemporaryAssignment: false, label: "Principale"}
+  A: {isPrimaryAssignment: false, isTemporaryAssignment: true,  label: "Temporaire"}
+  S: {isPrimaryAssignment: false, isTemporaryAssignment: false, label: "Secondaire"}
+
+# -----------------------------------------------------------------------------
+# Champs corroborés
+#   rule : type de règle (implémenté par le moteur)
+#   kind : normalisation de comparaison (text, text_loose, code, date, bool, number)
+# -----------------------------------------------------------------------------
+fields:
+  - target: personId
+    sources: [Matricule]
+    kind: code
+    rule: direct
+    rule_id: R-DIRECT
+    criticality: 5
+    criticality_reason: Clé d'identité de l'employé.
+    mapping_ref: "Mapping!8"
+
+  - target: givenName
+    sources: [PrénomUsuel]
+    kind: text
+    rule: direct_accent_tolerant
+    rule_id: R-NAME
+    interpretation: INT-NAME-ACCENTS
+    criticality: 2
+    criticality_reason: Identification visuelle, sans impact sur le temps.
+    mapping_ref: "Mapping!2"
+
+  - target: surname
+    sources: [NomFamille]
+    kind: text
+    rule: direct_accent_tolerant
+    rule_id: R-NAME
+    interpretation: INT-NAME-ACCENTS
+    criticality: 2
+    criticality_reason: Identification visuelle, sans impact sur le temps.
+    mapping_ref: "Mapping!3"
+
+  - target: contactEmail
+    sources: [PrénomUsuel, NomFamille, Matricule]
+    kind: text_loose
+    rule: email
+    rule_id: R-EMAIL
+    interpretation: INT-EMAIL
+    criticality: 3
+    criticality_reason: Accès et notifications dans le système Temps.
+    mapping_ref: "Mapping!4"
+    related_refs: ["Mapping!6"]
+
+  - target: onboardDate
+    sources: [DateEmbaucheRécente]
+    kind: date
+    rule: direct
+    rule_id: R-DIRECT
+    criticality: 4
+    criticality_reason: Ancienneté et admissibilité (vacances, primes).
+    mapping_ref: "Mapping!7"
+
+  - target: siteName
+    sources: [LibelléSite]
+    kind: text
+    rule: direct
+    rule_id: R-DIRECT
+    criticality: 2
+    criticality_reason: Libellé ; le code de site porte l'information opérationnelle.
+    mapping_ref: "Mapping!9"
+
+  - target: siteCode
+    sources: [CodeSite]
+    kind: code
+    rule: direct
+    rule_id: R-DIRECT
+    criticality: 4
+    criticality_reason: Lieu de travail utilisé pour la planification des horaires.
+    mapping_ref: "Mapping!10"
+
+  - target: divisionId
+    sources: [CodeDirection]
+    kind: code
+    rule: direct
+    rule_id: R-DIRECT
+    criticality: 4
+    criticality_reason: Rattachement organisationnel (approbations, rapports).
+    mapping_ref: "Mapping!11"
+
+  - target: divisionName
+    sources: [CodeDirection, LibelléDirection]
+    kind: text
+    rule: concat_code_label
+    rule_id: R-CONCAT
+    interpretation: INT-CONCAT-PADDING
+    params: {pad_width: 5, separator: "-"}
+    criticality: 2
+    criticality_reason: Libellé dérivé ; le code porte l'information.
+    mapping_ref: "Mapping!12"
+
+  - target: divisionCode
+    sources: [CodeImputation]
+    kind: code
+    rule: direct
+    rule_id: R-DIRECT
+    criticality: 4
+    criticality_reason: Centre de coûts d'imputation des heures.
+    mapping_ref: "Mapping!13"
+
+  - target: positionId
+    sources: [CodeEmploi]
+    kind: code
+    rule: direct
+    rule_id: R-DIRECT
+    criticality: 4
+    criticality_reason: Emploi occupé (règles de temps et d'horaire associées).
+    mapping_ref: "Mapping!14"
+
+  - target: positionName
+    sources: [CodeEmploi, IntituléEmploi]
+    kind: text
+    rule: concat_code_label
+    rule_id: R-CONCAT
+    interpretation: INT-CONCAT-PADDING
+    params: {pad_width: 4, separator: "-"}
+    criticality: 2
+    criticality_reason: Libellé dérivé ; le code porte l'information.
+    mapping_ref: "Mapping!15"
+
+  - target: positionCode
+    sources: [CodeEmploi]
+    kind: code
+    rule: direct
+    rule_id: R-DIRECT
+    criticality: 4
+    criticality_reason: Emploi occupé (règles de temps et d'horaire associées).
+    mapping_ref: "Mapping!16"
+
+  - target: statusReasonCode
+    sources: [CodeSuspensionAccès, CodeRaisonStatut, CodeStatutEmploi]
+    kind: code
+    rule: situation_reason_code
+    rule_id: R-SITUATION-CAD
+    interpretation: INT-SITUATION-CODE
+    criticality: 4
+    criticality_reason: Motif d'absence longue durée (traitement des absences).
+    mapping_ref: "Mapping!17"
+    related_refs: ["Mapping!19", "Règles situation d'emploi!3", "Jointure - Motif des situations!2"]
+
+  - target: expectedReturnDate
+    sources: [CodeSuspensionAccès, DateRetourAnticipée]
+    kind: date
+    rule: situation_return_date
+    rule_id: R-SITUATION-CADP
+    interpretation: INT-SITUATION-CODE
+    criticality: 4
+    criticality_reason: Date de reprise de la planification de l'employé.
+    mapping_ref: "Mapping!22"
+    related_refs: ["Règles situation d'emploi!3"]
+
+  - target: detailedStatus
+    sources: [CodeSuspensionAccès]
+    kind: text
+    rule: situation_label
+    rule_id: R-SITUATION-STATUS
+    interpretation: INT-SITUATION-CODE
+    criticality: 5
+    criticality_reason: Un employé absent planifié, ou actif bloqué, affecte directement les horaires.
+    mapping_ref: "Mapping!23"
+    related_refs: ["Règles situation d'emploi!2", "Règles situation d'emploi!3"]
+
+  - target: contractTypeCode
+    sources: [CatégorieEmploi, EstPermanent, EstTempsPlein]
+    kind: code
+    rule: contract_type
+    rule_id: R-CONTRACT
+    interpretation: INT-CONTRACT-UNMATCHED
+    criticality: 5
+    criticality_reason: Détermine les règles de temps, d'horaire et de rémunération applicables.
+    mapping_ref: "Mapping!24"
+    related_refs: ["Mapping!26", "Mapping!39", "Mapping!40"]
+
+  - target: isPrimaryAssignment
+    sources: [TypeAffectation]
+    kind: bool
+    rule: assignment_flag
+    rule_id: R-ASSIGN-TYPE
+    criticality: 4
+    criticality_reason: Affectation de référence pour la planification.
+    mapping_ref: "Mapping!41"
+    related_refs: ["Mapping!45"]
+
+  - target: isTemporaryAssignment
+    sources: [TypeAffectation]
+    kind: bool
+    rule: assignment_flag
+    rule_id: R-ASSIGN-TYPE
+    criticality: 4
+    criticality_reason: Affectation temporaire (bornée dans le temps).
+    mapping_ref: "Mapping!41"
+    related_refs: ["Mapping!43", "Mapping!45"]
+
+  - target: assignmentStartDate
+    sources: [DateEntréePoste, CodePoste, CodeDirection]
+    kind: date
+    rule: assignment_start
+    rule_id: R-ASSIGN-START
+    interpretation: INT-ASSIGN-DATES
+    criticality: 4
+    criticality_reason: Début de validité de l'affectation (horaires et imputation).
+    mapping_ref: "Mapping!46"
+    related_refs: ["Mapping!48", "Jointure - Détail du poste!2"]
+
+  - target: payGradeId
+    sources: [ÉchelleSalariale]
+    kind: code
+    rule: direct
+    rule_id: R-DIRECT
+    criticality: 4
+    criticality_reason: Groupe de rémunération (taux applicables).
+    mapping_ref: "Mapping!49"
+
+  - target: weeklyHoursOverride
+    sources: [HeuresNormeHebdo]
+    kind: number
+    rule: direct
+    rule_id: R-DIRECT
+    criticality: 5
+    criticality_reason: Heures normales ; impact direct sur la paie et les horaires.
+    mapping_ref: "Mapping!51"
+
+  - target: dailyHoursOverride
+    sources: [HeuresNormeQuotidienne]
+    kind: number
+    rule: direct
+    rule_id: R-DIRECT
+    criticality: 5
+    criticality_reason: Heures normales ; impact direct sur la paie et les horaires.
+    mapping_ref: "Mapping!52"
+
+  - target: assignmentEndDate
+    sources: [DateSortiePoste, CodePoste, CodeDirection]
+    kind: date
+    rule: assignment_end
+    rule_id: R-ASSIGN-END
+    interpretation: INT-ASSIGN-DATES
+    criticality: 4
+    criticality_reason: Fin de validité de l'affectation (horaires et imputation).
+    mapping_ref: "Mapping!53"
+    related_refs: ["Jointure - Détail du poste!2"]
+
+  - target: termEndDate
+    sources: [DateSortiePoste, CodePoste, CodeDirection]
+    kind: date
+    rule: assignment_end
+    rule_id: R-ASSIGN-END
+    interpretation: INT-ASSIGN-DATES
+    criticality: 3
+    criticality_reason: Fin du détail du poste ; redondant avec assignmentEndDate.
+    mapping_ref: "Mapping!56"
+    related_refs: ["Mapping!58"]
+
+# -----------------------------------------------------------------------------
+# Lignes de Mapping.xlsx volontairement non corroborées
+# -----------------------------------------------------------------------------
+excluded:
+  - source: LibelléImputation
+    target: null
+    mapping_ref: "Mapping!50"
+    reason: Aucun champ cible (« - » dans Mapping.xlsx).
+  - source: DateEffetRaison
+    target: null
+    mapping_ref: "Mapping!21"
+    reason: Aucun champ cible ni règle associée.
+
+# Colonnes sources utilisées uniquement comme entrées de règles ou de jointures
+support_columns:
+  - {column: CodeRaisonStatut, mapping_ref: "Mapping!19", role: "Clé de jointure vers la table des motifs"}
+  - {column: CatégorieEmploi,  mapping_ref: "Mapping!26", role: "EMPTP_CD du transcodage du type d'employé"}
+  - {column: EstPermanent,     mapping_ref: "Mapping!39", role: "PERM_IND du transcodage du type d'employé"}
+  - {column: EstTempsPlein,    mapping_ref: "Mapping!40", role: "FT_IND du transcodage du type d'employé"}
+
+# Colonnes cibles absentes de Mapping.xlsx : non corroborées (consignes :
+# « se fier uniquement aux fichiers de mapping »). Liste à titre informatif.
+unmapped_target_policy: ignore
+unmapped_target_notes:
+  termStartDate: Non mappé ; identique à assignmentStartDate dans l'extraction.
+  siteId: Non mappé ; identique à siteCode dans l'extraction.
+  activityStatus: Non mappé ; la situation est corroborée via detailedStatus.

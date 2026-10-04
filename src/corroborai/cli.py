@@ -8,6 +8,8 @@ from pathlib import Path
 
 from corroborai import __version__
 from corroborai.io.loaders import DataLoadError, load_bundle
+from corroborai.rules_config import RulesConfigError, load_rules, validate_against_data
+from corroborai.rules_doc import rules_markdown
 
 
 def _cmd_check(args: argparse.Namespace) -> int:
@@ -26,7 +28,41 @@ def _cmd_check(args: argparse.Namespace) -> int:
     for t in (bundle.source, bundle.target, bundle.poste_detail, bundle.motifs):
         print(f"  {t.name:<13} {t.df.shape[0]:>4} lignes × {t.df.shape[1] - 1:>3} colonnes  ({t.path.name})")
     print(f"  {'mapping':<13} {len(bundle.mapping):>4} feuilles: {', '.join(bundle.mapping)}")
-    return 0 if bundle.integrity.ok else 1
+
+    print("\nRègles (rules.yaml)")
+    try:
+        cfg = load_rules(args.rules)
+    except RulesConfigError as exc:
+        print(f"ERREUR : {exc}", file=sys.stderr)
+        return 2
+    res = validate_against_data(cfg, bundle)
+    print(f"  {len(cfg.fields)} champs, {len(cfg.interpretations)} interprétations, "
+          f"{len(res.errors)} erreur(s), {len(res.warnings)} avertissement(s)")
+    for e in res.errors:
+        print(f"  [ERREUR] {e}")
+    for w in res.warnings:
+        print(f"  [AVERT.] {w}")
+    return 0 if bundle.integrity.ok and res.ok else 1
+
+
+def _cmd_rules(args: argparse.Namespace) -> int:
+    try:
+        cfg = load_rules(args.rules)
+    except RulesConfigError as exc:
+        print(f"ERREUR : {exc}", file=sys.stderr)
+        return 2
+    if args.markdown:
+        text = rules_markdown(cfg)
+        if args.output:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(text, encoding="utf-8")
+            print(f"Documentation écrite : {args.output}")
+        else:
+            print(text)
+        return 0
+    for f in sorted(cfg.fields, key=lambda f: (-f.criticality, f.target)):
+        print(f"  [{f.criticality}] {f.target:<22} {f.rule_id:<20} {f.interpretation or ''}")
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -37,9 +73,16 @@ def build_parser() -> argparse.ArgumentParser:
     check = sub.add_parser("check", help="Vérifie l'intégrité et la structure des données d'entrée")
     check.add_argument("--data-dir", type=Path, default=Path("data"))
     check.add_argument("--config", type=Path, default=None, help="Chemin de datasets.yaml")
+    check.add_argument("--rules", type=Path, default=None, help="Chemin de rules.yaml")
     check.add_argument("--no-strict", action="store_true",
                        help="Continuer malgré un échec d'intégrité (déconseillé)")
     check.set_defaults(func=_cmd_check)
+
+    rules = sub.add_parser("rules", help="Affiche ou documente les règles codifiées")
+    rules.add_argument("--rules", type=Path, default=None, help="Chemin de rules.yaml")
+    rules.add_argument("--markdown", action="store_true", help="Produit la documentation Markdown")
+    rules.add_argument("-o", "--output", type=Path, default=None, help="Fichier de sortie (Markdown)")
+    rules.set_defaults(func=_cmd_rules)
     return p
 
 
