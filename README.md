@@ -207,6 +207,9 @@ pip install -e ".[dev,app]"
 pytest
 ```
 
+Le notebook de démonstration se régénère, avec ses sorties et sans Jupyter,
+par `python notebooks/build_demo.py` (fichiers du défi dans `data/`).
+
 La suite couvre chaque règle, l'appariement, le moteur d'hypothèses, le
 harnais IA (y compris face à un modèle malveillant simulé et contre des
 serveurs HTTP locaux), la rétroaction, le rapport et l'interface. Elle
@@ -224,6 +227,7 @@ config/                   règles, hypothèses, priorité, LLM, fichiers d'entr�
 data/                     fichiers d'extraction (non versionnés)
 docs/                     documentation
 feedback/                 rétroaction experte (exemple fourni)
+notebooks/                notebook de démonstration et son générateur
 src/corroborai/
 ├── io/                   chargement Excel/CSV, intégrité, normalisation
 ├── models.py             modèle des verdicts (Finding, Evidence…)
@@ -243,6 +247,7 @@ tests/                    tests ; tests/fixtures/ : jeu de données synthétique
 
 | Document | Contenu |
 |---|---|
+| [Démonstration](notebooks/demo.ipynb) | notebook exécuté : un cas conforme, un écart justifié, une anomalie, la rétroaction, l'IA et le rapport |
 | [Guide d'utilisation](docs/GUIDE_UTILISATEUR.md) | lire un verdict, investiguer, utiliser l'interface et la rétroaction |
 | [Architecture](docs/ARCHITECTURE.md) | pipeline, modèle de données, garanties, points d'extension |
 | [Règles de corroboration](docs/REGLES.md) | champs, règles, interprétations, criticités, hypothèses (généré) |
