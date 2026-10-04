@@ -10,7 +10,7 @@ encadrée seulement là où elle est nécessaire.
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
+pip install -e ".[dev,app]"     # « app » ajoute Streamlit pour l'interface web
 ```
 
 ## Données
@@ -29,6 +29,55 @@ corroborai check --data-dir data      # intégrité des fichiers + validation de
 corroborai rules                      # liste des champs corroborés
 corroborai rules --markdown -o docs/REGLES.md   # régénère la documentation des règles
 ```
+
+## Interface web
+
+```bash
+corroborai app        # ou : streamlit run app/streamlit_app.py
+```
+
+L'interface permet de charger les fichiers (répertoire ou téléversement — les
+fichiers téléversés sont copiés dans un répertoire temporaire, les originaux
+ne sont jamais modifiés), de choisir les interprétations et le mode IA, de
+lancer la corroboration, puis :
+
+- **Vue d'ensemble** — décomptes, intégrité, synthèse globale, priorités ;
+- **À investiguer** — écarts triés par priorité ; pour chacun : valeurs source /
+  attendue / cible, règle et référence Mapping.xlsx, cause probable, calcul de
+  la priorité, hypothèses, et **les lignes d'origine ayant servi à la décision** ;
+  correction du verdict par l'expert ;
+- **Motifs et règles candidates** — avec création d'une règle en un clic ;
+- **Rétroaction experte** — consigne en langage naturel traduite en règle,
+  formulaire, règles suggérées à partir des corrections, gestion de la
+  rétroaction enregistrée ;
+- **Tous les verdicts** et **Exporter** (Excel, CSV).
+
+## Rétroaction experte
+
+L'expert peut **corriger un verdict** ou **créer une règle** ; tout est
+enregistré dans `feedback/retroaction.yaml` (lisible, versionnable) et réappliqué
+à chaque exécution (`corroborai run --retroaction feedback/retroaction.yaml`).
+
+- Une **correction** porte une empreinte des valeurs jugées : si les données
+  changent, elle est déclarée *périmée* et n'est plus appliquée.
+- Une **règle experte** s'exprime dans un **mini-langage fermé** de quatre
+  opérations, qui ne peuvent que reconnaître des écarts comme acceptables
+  (ANOMALIE → JUSTIFIE) : `accept_alternative_source`, `accept_value_mapping`,
+  `accept_hypothesis`, `accept_subcategory`. Les verdicts conformes ne sont
+  jamais touchés.
+- Toute règle est **exécutée à blanc avant acceptation** : l'aperçu montre
+  exactement quels verdicts changeraient.
+- Les corrections répétées sur des écarts semblables génèrent des **règles
+  suggérées** (enrichissement de la base de règles).
+- Une consigne en langage naturel peut être **traduite par le LLM** en règle du
+  mini-langage, sous le même harnais : champ, colonnes, hypothèses et
+  sous-catégories doivent provenir du dossier, la règle doit être valide, puis
+  elle passe par l'aperçu et l'acceptation explicite. Sans LLM, le formulaire
+  produit les mêmes règles.
+
+Les verdicts modifiés portent la source de décision `EXPERT`, la règle ou la
+correction appliquée et le verdict initial ; la feuille « Rétroaction experte »
+du rapport liste chaque règle et correction avec son effet.
 
 ## Rapport
 
@@ -147,7 +196,9 @@ pytest                                    # ou : python -m unittest discover -s 
 CORROBORAI_DATA_DIR=/autre/chemin pytest  # si les données sont ailleurs
 ```
 
-Les tests d'intégration sont ignorés si les données sont absentes. Les tests
+Les tests d'intégration sont ignorés si les données sont absentes. L'interface
+est testée de bout en bout contre un module Streamlit simulé, et avec l'outil
+officiel `AppTest` lorsque Streamlit est installé. Les tests
 d'altération travaillent sur une copie temporaire, jamais sur les originaux.
 
 ## Structure
@@ -158,6 +209,7 @@ config/rules.yaml           mapping codifié (règles, interprétations, critici
 config/hypotheses.yaml      catalogue d'hypothèses et seuils
 config/scoring.yaml         formule et modificateurs de priorité
 config/llm.yaml             fournisseurs LLM, harnais, politique de flux
+feedback/retroaction.yaml   rétroaction experte enregistrée (créé par l'interface)
 docs/REGLES.md              documentation des règles (générée)
 src/corroborai/models.py    modèle Finding / Verdict / Evidence
 src/corroborai/io/          chargement en lecture seule, intégrité, normalisation
@@ -168,7 +220,10 @@ src/corroborai/rules/            règles déterministes (dates, situation, courr
 src/corroborai/engine.py         moteur de corroboration
 src/corroborai/analysis/         moteur d'hypothèses et score de priorité
 src/corroborai/ai/               couche LLM encadrée (politique, schémas, harnais, tâches)
+src/corroborai/feedback.py       rétroaction experte (corrections, mini-langage de règles)
+src/corroborai/service.py        couche de service de l'interface
 src/corroborai/report/           rapport Excel + CSV
+app/streamlit_app.py             interface web
 src/corroborai/cli.py       interface en ligne de commande
 tests/
 ```
@@ -180,5 +235,5 @@ tests/
 - [x] Étape 3 — appariement des affectations, moteur de règles, rapport Excel
 - [x] Étape 4 — détection de motifs, moteur d'hypothèses, scoring
 - [x] Étape 5 — harnais LLM (gabarit · Gemini · compatible OpenAI)
-- [ ] Étape 6 — interface Streamlit, rétroaction experte
+- [x] Étape 6 — interface Streamlit, rétroaction experte
 - [ ] Étape 7 — documentation, notebook de démo

@@ -65,7 +65,9 @@ class CorroborationResult:
     version: str = __version__
     errors: list[str] = field(default_factory=list)
     analysis: AnalysisResult | None = None
-    ai: Any = None   # AIReport, renseigné par corroborai.ai.tasks.run_ai
+    ai: Any = None        # AIReport, renseigné par corroborai.ai.tasks.run_ai
+    feedback: Any = None  # FeedbackReport (rétroaction experte appliquée)
+    rule_context: Any = None  # feedback.RuleContext (aperçu de règles expertes)
 
     def by_verdict(self) -> dict[Verdict, list[Finding]]:
         out: dict[Verdict, list[Finding]] = {v: [] for v in Verdict}
@@ -205,11 +207,14 @@ def _missing_finding(cfg: RulesConfig, pair: AssignmentPair) -> Finding:
 def corroborate(bundle: DataBundle, cfg: RulesConfig, overrides: dict[str, str] | None = None,
                 strict: bool = False, analyze: bool = True,
                 hypotheses: HypothesesConfig | None = None,
-                scoring: ScoringConfig | None = None) -> CorroborationResult:
+                scoring: ScoringConfig | None = None,
+                feedback: Any = None) -> CorroborationResult:
     """Exécute la corroboration complète.
 
     ``strict`` propage les erreurs internes (tests). ``analyze`` exécute le
     moteur d'hypothèses et le score de priorité (niveau 3 déterministe).
+    ``feedback`` (FeedbackStore) applique les règles expertes et corrections
+    après l'analyse et avant le calcul des priorités.
     """
     overrides = dict(overrides or {})
     _validate_overrides(cfg, overrides)
@@ -225,12 +230,15 @@ def corroborate(bundle: DataBundle, cfg: RulesConfig, overrides: dict[str, str] 
         else:
             findings.append(_missing_finding(cfg, pair))
 
-    analysis = None
+    from corroborai.feedback import RuleContext, apply_feedback  # import local : évite un cycle
+
+    hcfg = hypotheses or load_hypotheses()
+    hengine = HypothesisEngine(cfg, hcfg, refs, pairs, findings)
+    analysis = hengine.run() if analyze else None
+    rule_ctx = RuleContext(hengine.candidate_values_for, {f.target: f.kind for f in cfg.fields})
+    feedback_report = apply_feedback(findings, feedback, rule_ctx) if feedback is not None else None
     if analyze:
-        hcfg = hypotheses or load_hypotheses()
-        scfg = scoring or load_scoring(hypotheses=hcfg)
-        analysis = HypothesisEngine(cfg, hcfg, refs, pairs, findings).run()
-        apply_scores(findings, scfg)
+        apply_scores(findings, scoring or load_scoring(hypotheses=hcfg))
 
     errors = [f.finding_id for f in findings if f.subcategory == "erreur d'évaluation"]
     return CorroborationResult(
@@ -246,4 +254,6 @@ def corroborate(bundle: DataBundle, cfg: RulesConfig, overrides: dict[str, str] 
         duration_s=time.perf_counter() - t0,
         errors=errors,
         analysis=analysis,
+        feedback=feedback_report,
+        rule_context=rule_ctx,
     )

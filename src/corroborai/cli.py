@@ -90,7 +90,12 @@ def _cmd_run(args: argparse.Namespace) -> int:
             for e in res.errors:
                 print(f"[ERREUR] {e}", file=sys.stderr)
             return 2
-        result = corroborate(bundle, cfg, _parse_overrides(args.interpretation))
+        store = None
+        if args.retroaction:
+            from corroborai.feedback import FeedbackStore
+
+            store = FeedbackStore.load(args.retroaction, set(cfg.targets))
+        result = corroborate(bundle, cfg, _parse_overrides(args.interpretation), feedback=store)
     except (DataLoadError, RulesConfigError, ValueError) as exc:
         print(f"ERREUR : {exc}", file=sys.stderr)
         return 2
@@ -116,12 +121,27 @@ def _cmd_run(args: argparse.Namespace) -> int:
         print(f"  {v:<12} {counts[v]:>4}")
     print(f"Intégrité des fichiers sources après traitement : "
           f"{'OK' if result.integrity_after.ok else 'ÉCHEC'}")
+    if result.feedback is not None:
+        fb = result.feedback
+        print(f"Rétroaction experte : {sum(len(x) for x in fb.rules_applied.values())} écart(s) par règle, "
+              f"{len(fb.corrections_applied)} correction(s), {len(fb.corrections_stale)} périmée(s)")
     if result.ai is not None:
         ai = result.ai
         print(f"Couche IA : {ai.provider} ({ai.provider_class}) — {ai.calls} tâche(s) : "
               + ", ".join(f"{k}={v}" for k, v in sorted(ai.statuses.items())))
     print(f"Rapport : {xlsx}\nCSV     : {csv_path}")
     return 0 if result.integrity_after.ok and not result.errors else 1
+
+
+def _cmd_app(args: argparse.Namespace) -> int:
+    import subprocess
+
+    app = Path(__file__).resolve().parents[2] / "app" / "streamlit_app.py"
+    try:
+        return subprocess.call([sys.executable, "-m", "streamlit", "run", str(app)])
+    except FileNotFoundError:  # pragma: no cover
+        print("Streamlit n'est pas installé : pip install -e '.[app]'", file=sys.stderr)
+        return 2
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -144,6 +164,8 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--rules", type=Path, default=None, help="Chemin de rules.yaml")
     run.add_argument("--interpretation", action="append", metavar="ID=CHOIX",
                      help="Force une interprétation (ex. INT-ASSIGN-DATES=strict_literal)")
+    run.add_argument("--retroaction", type=Path, default=None,
+                     help="Fichier de rétroaction experte (règles et corrections) à appliquer")
     run.add_argument("--ia", action="store_true", help="Active la couche LLM encadrée (synthèses, triage)")
     run.add_argument("--fournisseur", default=None,
                      help="Fournisseur LLM défini dans llm.yaml (défaut : default_provider, soit « gabarit »)")
@@ -151,6 +173,9 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--cache-ia", type=Path, default=None,
                      help="Répertoire de cache des réponses LLM (revalidées à chaque lecture)")
     run.set_defaults(func=_cmd_run)
+
+    app = sub.add_parser("app", help="Lance l'interface web (Streamlit)")
+    app.set_defaults(func=_cmd_app)
 
     rules = sub.add_parser("rules", help="Affiche ou documente les règles codifiées")
     rules.add_argument("--rules", type=Path, default=None, help="Chemin de rules.yaml")

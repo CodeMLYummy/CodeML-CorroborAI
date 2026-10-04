@@ -118,6 +118,17 @@ class HypothesisEngine:
         except KeyError:
             return FieldKind.TEXT
 
+    def candidate_values_for(self, f: Finding) -> dict[str, Any]:
+        """Valeurs des colonnes liées à l'affectation d'un écart (hors colonnes mappées du champ)."""
+        pair = self.pair_by_key.get((f.person_id, f.assignment_key))
+        if pair is None or not pair.matched:
+            return {}
+        try:
+            exclude = set(self.cfg.field(f.target_field).sources)
+        except KeyError:
+            exclude = set()
+        return {k: v for k, (v, _) in self._candidate_values(pair, exclude).items()}
+
     # ------------------------------------------------------------------ hypothèses de champ
 
     def _systemic(self, target_field: str, fs: list[Finding], anomalies: list[Finding]) -> None:

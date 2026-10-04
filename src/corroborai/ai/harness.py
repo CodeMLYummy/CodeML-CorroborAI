@@ -45,6 +45,7 @@ doivent figurer dans les données. Cite uniquement des identifiants de preuve et
 6. Rédige en français, de façon factuelle et concise, pour des personnes non techniques."""
 
 TemplateFn = Callable[[Dossier], dict[str, Any]]
+ExtraValidator = Callable[[dict[str, Any], Dossier], list[str]]
 
 
 class Status(str, Enum):
@@ -148,7 +149,18 @@ class Harness:
             raise RuntimeError(f"Gabarit {task} non conforme au schéma : {report.errors}")
         return report.data  # type: ignore[return-value]
 
-    def run(self, task: str, dossier: Dossier, instructions: str, template: TemplateFn) -> HarnessResult:
+    def _validate(self, task: str, raw: str, dossier: Dossier, extra: ExtraValidator | None) -> ValidationReport:
+        report = validate(task, raw, dossier)
+        if report.ok and extra is not None:
+            errors = extra(report.data, dossier)  # type: ignore[arg-type]
+            if errors:
+                return ValidationReport(False, None, errors)
+        return report
+
+    def run(self, task: str, dossier: Dossier, instructions: str, template: TemplateFn,
+            extra_validate: ExtraValidator | None = None) -> HarnessResult:
+        """``extra_validate`` ajoute des contrôles propres à la tâche (ex. mini-langage de règles) ;
+        ses erreurs déclenchent la même nouvelle tentative que les erreurs de schéma."""
         t0 = time.perf_counter()
         flow = check_flow(dossier, self.provider.spec, self.cfg.flow, self.pseudo)
 
@@ -167,7 +179,7 @@ class Harness:
         cached = self._cache_get(key)
         attempts: list[dict[str, Any]] = []
         if cached is not None:
-            report = validate(task, cached, dossier)
+            report = self._validate(task, cached, dossier, extra_validate)
             attempts.append({"origine": "cache", "reponse_brute": cached, "erreurs": report.errors})
             if report.ok:
                 return finish(report.data, "LLM", Status.CACHE_VALIDE, attempts)  # type: ignore[arg-type]
@@ -181,7 +193,7 @@ class Harness:
                 attempts.append({"origine": f"appel {i + 1}", "erreur_fournisseur": str(exc)})
                 return finish(self._template(task, dossier, template), "GABARIT", Status.REPLI_FOURNISSEUR,
                               attempts)
-            report: ValidationReport = validate(task, raw, dossier)
+            report: ValidationReport = self._validate(task, raw, dossier, extra_validate)
             attempts.append({"origine": f"appel {i + 1}", "reponse_brute": raw, "erreurs": report.errors})
             if report.ok:
                 self._cache_put(key, raw, task)

@@ -23,7 +23,10 @@ from corroborai.ai.policy import Dossier
 SYNTHESE_GLOBALE = "SYNTHESE_GLOBALE"
 SYNTHESE_EMPLOYE = "SYNTHESE_EMPLOYE"
 TRIAGE_ANOMALIE = "TRIAGE_ANOMALIE"
-TASKS = (SYNTHESE_GLOBALE, SYNTHESE_EMPLOYE, TRIAGE_ANOMALIE)
+TRADUCTION_REGLE = "TRADUCTION_REGLE"
+TASKS = (SYNTHESE_GLOBALE, SYNTHESE_EMPLOYE, TRIAGE_ANOMALIE, TRADUCTION_REGLE)
+RULE_OPERATIONS = ("accept_alternative_source", "accept_value_mapping", "accept_hypothesis",
+                   "accept_subcategory", "AUCUNE")
 
 # Catégories de triage : catalogue d'hypothèses déterministes + causes plausibles
 # qu'aucune règle ne peut vérifier (saisie, délai de synchronisation…).
@@ -60,6 +63,14 @@ class Obj:
     fields: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class Dict_:
+    """Objet à clés libres (paramètres d'opération), validé ensuite par le mini-langage.
+    Valeurs : texte court ou objet {texte: texte} d'au plus ``max_entries`` entrées."""
+
+    max_entries: int = 50
+
+
 SCHEMAS: dict[str, Obj] = {
     SYNTHESE_GLOBALE: Obj({
         "synthese": Str(40, 900),
@@ -74,6 +85,13 @@ SCHEMAS: dict[str, Obj] = {
             "cause_commune": Str(10, 260),
         }), 0, 5),
         "preuves_citees": List_(Str(3, 40, grounded=False), 1, 30, subset_of="evidence"),
+    }),
+    TRADUCTION_REGLE: Obj({
+        "operation": Enum_(RULE_OPERATIONS),
+        "champ": Str(0, 60, grounded=False),
+        "parametres": Dict_(),
+        "reformulation": Str(10, 400),
+        "confiance": Enum_(AI_CONFIDENCE),
     }),
     TRIAGE_ANOMALIE: Obj({
         "categorie": Enum_(TRIAGE_CATEGORIES),
@@ -157,6 +175,20 @@ def _check(value: Any, schema: Any, path: str, dossier: Dossier, haystack: str, 
     elif isinstance(schema, Enum_):
         if value not in schema.values:
             errors.append(f"{path} : valeur « {value} » hors de l'énumération autorisée")
+    elif isinstance(schema, Dict_):
+        if not isinstance(value, dict):
+            errors.append(f"{path} : objet attendu")
+            return
+        def short(x: Any) -> bool:
+            return isinstance(x, str) and len(x) <= 200
+        for k, v in value.items():
+            if not short(k):
+                errors.append(f"{path} : clé invalide")
+            elif isinstance(v, dict):
+                if len(v) > schema.max_entries or not all(short(a) and short(b) for a, b in v.items()):
+                    errors.append(f"{path}.{k} : objet {{texte: texte}} d'au plus {schema.max_entries} entrées attendu")
+            elif not short(v):
+                errors.append(f"{path}.{k} : texte court attendu")
 
 
 def validate(task: str, raw: str, dossier: Dossier) -> ValidationReport:
@@ -184,5 +216,7 @@ def schema_description(task: str) -> str:
             return f"texte de {schema.min_len} à {schema.max_len} caractères"
         if isinstance(schema, Enum_):
             return "une valeur parmi : " + ", ".join(schema.values)
+        if isinstance(schema, Dict_):
+            return "objet de paramètres propre à l'opération (voir « operations » dans les données)"
         return str(schema)
     return json.dumps(describe(SCHEMAS[task]), ensure_ascii=False, indent=1)

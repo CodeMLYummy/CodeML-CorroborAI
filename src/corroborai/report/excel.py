@@ -151,6 +151,14 @@ def _synthesis(ws: Worksheet, result: CorroborationResult, n_detail: int) -> Non
     if result.analysis:
         r = _kv(ws, r, "Motifs détectés", len(result.analysis.patterns))
         r = _kv(ws, r, "Règles candidates", len(result.analysis.candidate_rules))
+        if result.feedback is not None:
+            fb = result.feedback
+            n_rules = sum(1 for x in fb.rules_applied.values() if x)
+            r = _kv(ws, r, "Rétroaction experte",
+                    f"{len(fb.rules_applied)} règle(s) ({n_rules} appliquée(s), "
+                    f"{sum(len(x) for x in fb.rules_applied.values())} écart(s)) — "
+                    f"{len(fb.corrections_applied)} correction(s) appliquée(s), "
+                    f"{len(fb.corrections_stale)} périmée(s)")
         if result.ai is not None:
             ai = result.ai
             statuses = ", ".join(f"{k} : {v}" for k, v in sorted(ai.statuses.items())) or "aucun"
@@ -254,6 +262,34 @@ CANDIDATE_COLUMNS = [
 ]
 
 
+FEEDBACK_COLUMNS = [
+    ("Type", "kind", 12, False), ("Identifiant", "id", 30, False), ("Champ", "field", 22, False),
+    ("Description", "description", 60, True), ("Justification", "reason", 50, True),
+    ("Provenance", "provenance", 16, False), ("Auteur", "author", 14, False), ("Date", "created", 20, False),
+    ("Écarts touchés", "count", 10, False), ("Statut", "status", 16, False),
+]
+
+
+def _feedback_records(result: CorroborationResult) -> list[dict[str, Any]]:
+    fb = result.feedback
+    if fb is None or fb.store is None:
+        return []
+    out = []
+    for r in fb.store.rules:
+        n = len(fb.rules_applied.get(r.id, []))
+        out.append({"kind": "Règle", "id": r.id, "field": r.field, "description": r.describe(), "reason": r.reason,
+                    "provenance": r.provenance, "author": r.author, "created": r.created, "count": n,
+                    "status": "active" if r.active else "inactive"})
+    for c in fb.store.corrections:
+        status = ("appliquée" if c.finding_id in fb.corrections_applied else
+                  "PÉRIMÉE" if c.finding_id in fb.corrections_stale else "écart introuvable")
+        out.append({"kind": "Correction", "id": c.finding_id, "field": c.finding_id.rsplit(":", 1)[-1],
+                    "description": f"Verdict fixé à {c.verdict}", "reason": c.reason, "provenance": "EXPERT",
+                    "author": c.author, "created": c.created, "count": 1 if status == "appliquée" else 0,
+                    "status": status})
+    return out
+
+
 AI_COLUMNS = [
     ("Portée", "scope", 10, False), ("Employé", "person", 11, False),
     ("Synthèse", "synthese", 80, True), ("Pistes", "pistes", 60, True),
@@ -337,6 +373,9 @@ def write_report(result: CorroborationResult, path: str | Path) -> Path:
                                                      verdict_key=None)),
         *([("Synthèses IA", lambda w: _write_table(w, AI_COLUMNS, _ai_records(result), verdict_key=None))]
           if result.ai is not None else []),
+        *([("Rétroaction experte", lambda w: _write_table(w, FEEDBACK_COLUMNS, _feedback_records(result),
+                                                          verdict_key=None))]
+          if result.feedback is not None else []),
         ("Écarts justifiés", lambda w: _write_table(w, VIEW_COLUMNS, by("JUSTIFIE"))),
         ("Conformes", lambda w: _write_table(w, VIEW_COLUMNS, by("CONFORME"))),
         ("Détail", lambda w: _write_table(w, COLUMNS, records)),
