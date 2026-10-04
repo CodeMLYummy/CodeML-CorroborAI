@@ -96,6 +96,17 @@ def _cmd_run(args: argparse.Namespace) -> int:
         return 2
 
     out = Path(args.out)
+    if args.ia:
+        from corroborai.ai.policy import LLMConfigError, load_llm_config
+        from corroborai.ai.tasks import run_ai
+
+        try:
+            llm_cfg = load_llm_config(args.llm_config)
+            result.ai = run_ai(result, bundle, llm_cfg, args.fournisseur,
+                               cache_dir=args.cache_ia, audit_path=out / "audit_ia.jsonl")
+        except LLMConfigError as exc:
+            print(f"ERREUR : {exc}", file=sys.stderr)
+            return 2
     xlsx = write_report(result, out / "rapport_corroboration.xlsx")
     csv_path = write_csv(result, out / "verdicts.csv")
     counts = result.counts()
@@ -105,6 +116,10 @@ def _cmd_run(args: argparse.Namespace) -> int:
         print(f"  {v:<12} {counts[v]:>4}")
     print(f"Intégrité des fichiers sources après traitement : "
           f"{'OK' if result.integrity_after.ok else 'ÉCHEC'}")
+    if result.ai is not None:
+        ai = result.ai
+        print(f"Couche IA : {ai.provider} ({ai.provider_class}) — {ai.calls} tâche(s) : "
+              + ", ".join(f"{k}={v}" for k, v in sorted(ai.statuses.items())))
     print(f"Rapport : {xlsx}\nCSV     : {csv_path}")
     return 0 if result.integrity_after.ok and not result.errors else 1
 
@@ -129,6 +144,12 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--rules", type=Path, default=None, help="Chemin de rules.yaml")
     run.add_argument("--interpretation", action="append", metavar="ID=CHOIX",
                      help="Force une interprétation (ex. INT-ASSIGN-DATES=strict_literal)")
+    run.add_argument("--ia", action="store_true", help="Active la couche LLM encadrée (synthèses, triage)")
+    run.add_argument("--fournisseur", default=None,
+                     help="Fournisseur LLM défini dans llm.yaml (défaut : default_provider, soit « gabarit »)")
+    run.add_argument("--llm-config", type=Path, default=None, help="Chemin de llm.yaml")
+    run.add_argument("--cache-ia", type=Path, default=None,
+                     help="Répertoire de cache des réponses LLM (revalidées à chaque lecture)")
     run.set_defaults(func=_cmd_run)
 
     rules = sub.add_parser("rules", help="Affiche ou documente les règles codifiées")

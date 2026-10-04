@@ -65,6 +65,7 @@ class CorroborationResult:
     version: str = __version__
     errors: list[str] = field(default_factory=list)
     analysis: AnalysisResult | None = None
+    ai: Any = None   # AIReport, renseigné par corroborai.ai.tasks.run_ai
 
     def by_verdict(self) -> dict[Verdict, list[Finding]]:
         out: dict[Verdict, list[Finding]] = {v: [] for v in Verdict}

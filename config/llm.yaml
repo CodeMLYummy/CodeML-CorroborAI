@@ -1,0 +1,60 @@
+# =============================================================================
+# CorroborAI — Couche LLM encadrée (harnais)
+# =============================================================================
+# Le LLM n'intervient QUE pour :
+#   * SYNTHESE_GLOBALE  : résumé des motifs pour l'équipe fonctionnelle (1 appel)
+#   * SYNTHESE_EMPLOYE  : diagnostic regroupé par employé (anomalies non systémiques)
+#   * TRIAGE_ANOMALIE   : piste pour une anomalie qu'aucune hypothèse n'explique
+# Il n'a aucun outil, ne fixe jamais un verdict (le schéma de sortie ne le
+# permet pas) et toute sortie est validée ; en cas d'échec : gabarit déterministe.
+# =============================================================================
+
+version: 1
+
+# Fournisseur utilisé par défaut. « gabarit » = aucun LLM (reproductible, hors ligne).
+default_provider: gabarit
+
+providers:
+  gabarit:
+    type: template
+    data_class: local
+
+  gemini:
+    type: gemini
+    data_class: externe
+    model: gemini-3.5-flash-lite            # vérifier les modèles disponibles : ai.google.dev
+    base_url: https://generativelanguage.googleapis.com/v1beta
+    api_key_env: GEMINI_API_KEY             # la clé n'est jamais écrite dans les journaux
+    timeout_s: 60
+
+  local:
+    type: openai_compat                     # Ollama, LM Studio, llama.cpp server, vLLM
+    data_class: local
+    model: qwen2.5:3b
+    base_url: http://localhost:11434/v1
+    api_key_env: null
+    timeout_s: 180
+
+harness:
+  max_attempts: 2               # 1 tentative + 1 nouvelle tentative avec la liste des erreurs
+  temperature: 0
+  max_output_tokens: 1024
+  synthesis_min_priority: 30    # synthèse par employé seulement si une anomalie atteint ce seuil
+  exclude_systemic_from_employee: true
+
+# -----------------------------------------------------------------------------
+# Politique de flux de données (contrôle déterministe AVANT chaque envoi)
+# Chaque élément d'un dossier porte une classe ; un fournisseur ne reçoit que
+# les classes autorisées pour sa catégorie. Un fournisseur « local » dont
+# l'adresse n'est pas une adresse de bouclage est traité comme « externe ».
+# -----------------------------------------------------------------------------
+flow_policy:
+  allowed:
+    local:   [IDENTIFIANT_PSEUDONYMISE, VALEUR_METIER, TEXTE_REGLE, PREUVE, META]
+    externe: [IDENTIFIANT_PSEUDONYMISE, VALEUR_METIER, TEXTE_REGLE, PREUVE, META]
+  # Contrôle final sur la charge sérialisée destinée à un fournisseur externe :
+  # aucun identifiant brut connu, aucun motif d'identifiant.
+  external_leak_scan: true
+  identifier_patterns:
+    - '\b\d{7,}\b'                          # matricules et identifiants numériques longs
+    - '[\w.+-]+@[\w-]+(\.[\w-]+)+'          # adresses courriel

@@ -69,7 +69,8 @@ _BY_KEY = {c[1]: c for c in COLUMNS}
 INVESTIGATE_COLUMNS = [_BY_KEY[k] for k in (
     "priority", "person_id", "assignment_key", "target_field", "verdict", "subcategory",
     "source_raw", "expected", "target_raw", "probable_cause", "justification", "criticality",
-    "confidence", "priority_breakdown", "hypotheses", "rule_id", "rule_ref", "evidence", "rule_params")]
+    "confidence", "priority_breakdown", "hypotheses", "explanation", "explanation_source",
+    "rule_id", "rule_ref", "evidence", "rule_params")]
 VIEW_COLUMNS = [_BY_KEY[k] for k in (
     "person_id", "assignment_key", "target_field", "verdict", "subcategory", "criticality",
     "confidence", "source_raw", "expected", "target_raw", "justification", "rule_id", "rule_ref",
@@ -150,6 +151,24 @@ def _synthesis(ws: Worksheet, result: CorroborationResult, n_detail: int) -> Non
     if result.analysis:
         r = _kv(ws, r, "Motifs détectés", len(result.analysis.patterns))
         r = _kv(ws, r, "Règles candidates", len(result.analysis.candidate_rules))
+        if result.ai is not None:
+            ai = result.ai
+            statuses = ", ".join(f"{k} : {v}" for k, v in sorted(ai.statuses.items())) or "aucun"
+            r = _kv(ws, r, "Couche IA — fournisseur",
+                    f"{ai.provider}{f' ({ai.model})' if ai.model else ''} — données {ai.provider_class}")
+            r = _kv(ws, r, "Couche IA — tâches", f"{ai.calls} ({statuses})")
+            if ai.audit_path:
+                r = _kv(ws, r, "Journal d'audit IA", str(ai.audit_path.name))
+            glob = next((x for x in ai.summaries if x.scope == "GLOBALE"), None)
+            if glob:
+                r += 1
+                r = _title(ws, r, f"Synthèse globale ({glob.source})")
+                ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=5)
+                c = ws.cell(row=r, column=1, value=glob.synthese)
+                c.font = Font(name=FONT, size=10)
+                c.alignment = Alignment(wrap_text=True, vertical="top")
+                ws.row_dimensions[r].height = 110
+                r += 1
         top = [f for f in sorted(result.findings, key=_sort_key) if f.priority is not None][:5]
         r += 1
         r = _title(ws, r, "Priorités les plus élevées")
@@ -235,6 +254,23 @@ CANDIDATE_COLUMNS = [
 ]
 
 
+AI_COLUMNS = [
+    ("Portée", "scope", 10, False), ("Employé", "person", 11, False),
+    ("Synthèse", "synthese", 80, True), ("Pistes", "pistes", 60, True),
+    ("Regroupements / références", "details", 50, True),
+    ("Source", "source", 10, False), ("Statut du harnais", "status", 20, False),
+]
+
+
+def _ai_records(result: CorroborationResult) -> list[dict[str, Any]]:
+    ai = result.ai
+    if ai is None:
+        return []
+    return [{"scope": s.scope, "person": s.person_id or "", "synthese": s.synthese,
+             "pistes": "\n".join(f"• {p}" for p in s.pistes), "details": "\n".join(s.details),
+             "source": s.source, "status": s.status} for s in ai.summaries]
+
+
 def _pattern_records(result: CorroborationResult) -> list[dict[str, Any]]:
     if not result.analysis:
         return []
@@ -299,6 +335,8 @@ def write_report(result: CorroborationResult, path: str | Path) -> Path:
         ("Motifs", lambda w: _write_table(w, PATTERN_COLUMNS, _pattern_records(result), verdict_key=None)),
         ("Règles candidates", lambda w: _write_table(w, CANDIDATE_COLUMNS, _candidate_records(result),
                                                      verdict_key=None)),
+        *([("Synthèses IA", lambda w: _write_table(w, AI_COLUMNS, _ai_records(result), verdict_key=None))]
+          if result.ai is not None else []),
         ("Écarts justifiés", lambda w: _write_table(w, VIEW_COLUMNS, by("JUSTIFIE"))),
         ("Conformes", lambda w: _write_table(w, VIEW_COLUMNS, by("CONFORME"))),
         ("Détail", lambda w: _write_table(w, COLUMNS, records)),
