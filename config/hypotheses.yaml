@@ -1,0 +1,83 @@
+# =============================================================================
+# CorroborAI — Moteur d'hypothèses (analyse abductive déterministe)
+# =============================================================================
+# Pour chaque verdict ANOMALIE ou INDETERMINE, le moteur teste un catalogue
+# FERMÉ d'explications. Chaque hypothèse est une fonction pure, générique
+# (aucune n'est écrite pour un champ particulier) ; elle retourne « vérifiée /
+# non vérifiée » et les preuves qui l'appuient.
+#
+# Les hypothèses enrichissent un verdict ; elles ne le modifient JAMAIS.
+# =============================================================================
+
+version: 1
+
+hypotheses:
+  H-PERMUTATION:
+    label: Permutation entre deux employés
+    description: >-
+      La valeur cible de l'employé A est la valeur attendue de l'employé B, et
+      réciproquement, pour le même champ. Typique d'une inversion
+      d'enregistrements lors du chargement.
+
+  H-HISTORY-RECORD:
+    label: Valeur d'un autre enregistrement de l'historique du poste
+    description: >-
+      La date cible correspond à la date d'effet d'un autre enregistrement de
+      l'historique du détail du poste (ex. le plus récent) : la règle de
+      calcul a probablement été appliquée sur le mauvais enregistrement.
+
+  H-ALT-SOURCE:
+    label: Valeur provenant d'une autre colonne
+    description: >-
+      La valeur cible est égale à une autre colonne (source, détail du poste,
+      motif) que celle prévue au mapping, et cette correspondance est
+      confirmée sur l'ensemble de la population du champ.
+
+  H-ALT-INTERPRETATION:
+    label: Conforme sous une interprétation alternative
+    description: >-
+      La valeur cible est conforme si la règle est lue selon une interprétation
+      alternative documentée.
+
+  H-BIJECTION:
+    label: Transformation systématique cohérente
+    description: >-
+      Les écarts du champ suivent une correspondance un-pour-un stable entre
+      valeur attendue et valeur cible sur toute la population (même valeur
+      attendue → même valeur cible). Typique d'un recodage ou d'une
+      anonymisation appliqués à un seul des deux systèmes.
+
+  H-SYSTEMIC:
+    label: Écart systémique
+    description: >-
+      La grande majorité des enregistrements présentent le même type d'écart
+      pour ce champ : cause globale probable (chargement, environnement,
+      anonymisation) plutôt qu'erreur de saisie individuelle.
+
+  H-TYPE-ABSENT:
+    label: Type d'affectation absent du système cible
+    description: >-
+      Aucune affectation de ce type n'existe dans le système cible pour aucun
+      employé : le type n'est probablement pas transmis par l'interface.
+
+# Ordre de priorité pour retenir la « cause probable » quand plusieurs
+# hypothèses sont vérifiées (la plus spécifique d'abord).
+precedence:
+  - H-PERMUTATION
+  - H-HISTORY-RECORD
+  - H-ALT-SOURCE
+  - H-ALT-INTERPRETATION
+  - H-BIJECTION
+  - H-SYSTEMIC
+  - H-TYPE-ABSENT
+
+thresholds:
+  systemic_min_share: 0.8        # part des enregistrements du champ en anomalie
+  systemic_min_count: 5
+  bijection_min_count: 5         # nombre minimal d'écarts
+  alt_source_min_support: 0.9    # part de la population où cible = colonne candidate
+  alt_source_min_count: 5        # population minimale pour conclure
+
+# Colonnes jamais retenues comme source alternative (identifiants techniques
+# dont une égalité serait fortuite).
+alt_source_excluded_columns: [Matricule, _row, IdentifiantResponsable, MatriculeGestionnaire]

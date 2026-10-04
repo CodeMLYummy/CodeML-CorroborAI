@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from corroborai.rules_config import RulesConfig
 
+from corroborai.analysis.config import HypothesesConfig, ScoringConfig
+
 
 def _cell(text: str) -> str:
     return " ".join(str(text).split()).replace("|", "\\|")
@@ -80,3 +82,45 @@ def rules_markdown(cfg: RulesConfig) -> str:
         for col, note in cfg.unmapped_target_notes.items():
             out.append(f"- `{col}` : {note}")
     return "\n".join(out) + "\n"
+
+
+def analysis_markdown(hcfg: HypothesesConfig, scfg: ScoringConfig) -> str:
+    out = [
+        "## Moteur d'hypothèses (analyse déterministe des écarts)",
+        "",
+        "Pour chaque verdict ANOMALIE ou INDETERMINE, un catalogue fermé d'hypothèses génériques "
+        "est testé (`config/hypotheses.yaml`). Une hypothèse vérifiée ajoute des preuves, une cause "
+        "probable et un modificateur de priorité ; elle ne modifie jamais le verdict.",
+        "",
+        "| Ordre | Hypothèse | Libellé | Modificateur de priorité | Justification du modificateur |",
+        "|:-:|---|---|:-:|---|",
+    ]
+    for i, hid in enumerate(hcfg.precedence, start=1):
+        h, m = hcfg.hypotheses[hid], scfg.modifiers[hid]
+        out.append(f"| {i} | `{hid}` | {h.label} | ×{m.factor:g} | {_cell(m.reason)} |")
+    out += ["", "### Description des hypothèses", ""]
+    for hid in hcfg.precedence:
+        out.append(f"- **`{hid}`** — {_cell(hcfg.hypotheses[hid].description)}")
+    out += ["", "### Seuils", "",
+            f"- Écart systémique : au moins {hcfg.systemic_min_count} enregistrements et "
+            f"{hcfg.systemic_min_share:.0%} du champ.",
+            f"- Bijection : au moins {hcfg.bijection_min_count} écarts, correspondance un-pour-un, et une "
+            "valeur attendue partagée par des employés différents (sinon la bijection est triviale).",
+            f"- Source alternative : concordance sur au moins {hcfg.alt_source_min_support:.0%} d'une "
+            f"population d'au moins {hcfg.alt_source_min_count} enregistrements, supérieure à celle de la "
+            "règle actuelle, et au moins une anomalie expliquée. La colonne devient une règle candidate.",
+            "",
+            "## Score de priorité", "",
+            f"priorité = {scfg.scale:g} × (criticité / 5) × poids de confiance × base du verdict × "
+            f"produit des modificateurs, plafonnée à {scfg.scale:g}.", "",
+            "| Confiance | Poids |", "|---|:-:|"]
+    for k, v in scfg.confidence_weights.items():
+        out.append(f"| {k} | {v:g} |")
+    out += ["", "| Verdict | Base |", "|---|:-:|"]
+    for k, v in scfg.verdict_base.items():
+        out.append(f"| {k} | {v:g} |")
+    return "\n".join(out) + "\n"
+
+
+def documentation_markdown(cfg: RulesConfig, hcfg: HypothesesConfig, scfg: ScoringConfig) -> str:
+    return rules_markdown(cfg) + "\n" + analysis_markdown(hcfg, scfg)

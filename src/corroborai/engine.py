@@ -21,6 +21,8 @@ from datetime import datetime
 from typing import Any
 
 from corroborai import __version__
+from corroborai.analysis import AnalysisResult, HypothesisEngine, apply_scores, load_hypotheses, load_scoring
+from corroborai.analysis.config import HypothesesConfig, ScoringConfig
 from corroborai.io.loaders import ROW_COL, DataBundle, IntegrityReport
 from corroborai.matching import AssignmentPair, MatchMethod, match_assignments
 from corroborai.models import Confidence, DecisionSource, Evidence, Finding, Verdict
@@ -62,6 +64,7 @@ class CorroborationResult:
     duration_s: float
     version: str = __version__
     errors: list[str] = field(default_factory=list)
+    analysis: AnalysisResult | None = None
 
     def by_verdict(self) -> dict[Verdict, list[Finding]]:
         out: dict[Verdict, list[Finding]] = {v: [] for v in Verdict}
@@ -199,8 +202,14 @@ def _missing_finding(cfg: RulesConfig, pair: AssignmentPair) -> Finding:
 
 
 def corroborate(bundle: DataBundle, cfg: RulesConfig, overrides: dict[str, str] | None = None,
-                strict: bool = False) -> CorroborationResult:
-    """Exécute la corroboration complète. ``strict`` propage les erreurs internes (tests)."""
+                strict: bool = False, analyze: bool = True,
+                hypotheses: HypothesesConfig | None = None,
+                scoring: ScoringConfig | None = None) -> CorroborationResult:
+    """Exécute la corroboration complète.
+
+    ``strict`` propage les erreurs internes (tests). ``analyze`` exécute le
+    moteur d'hypothèses et le score de priorité (niveau 3 déterministe).
+    """
     overrides = dict(overrides or {})
     _validate_overrides(cfg, overrides)
     started, t0 = datetime.now(), time.perf_counter()
@@ -215,6 +224,13 @@ def corroborate(bundle: DataBundle, cfg: RulesConfig, overrides: dict[str, str] 
         else:
             findings.append(_missing_finding(cfg, pair))
 
+    analysis = None
+    if analyze:
+        hcfg = hypotheses or load_hypotheses()
+        scfg = scoring or load_scoring(hypotheses=hcfg)
+        analysis = HypothesisEngine(cfg, hcfg, refs, pairs, findings).run()
+        apply_scores(findings, scfg)
+
     errors = [f.finding_id for f in findings if f.subcategory == "erreur d'évaluation"]
     return CorroborationResult(
         findings=findings,
@@ -228,4 +244,5 @@ def corroborate(bundle: DataBundle, cfg: RulesConfig, overrides: dict[str, str] 
         started_at=started,
         duration_s=time.perf_counter() - t0,
         errors=errors,
+        analysis=analysis,
     )

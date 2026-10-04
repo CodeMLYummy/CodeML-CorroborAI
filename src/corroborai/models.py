@@ -41,11 +41,8 @@ class Confidence(str, Enum):
 
     ELEVEE = "ELEVEE"      # règle déterministe sans hypothèse d'interprétation
     MOYENNE = "MOYENNE"    # règle appliquée avec une interprétation paramétrée
-    FAIBLE = "FAIBLE"      # repose sur une hypothèse
-
-    @property
-    def weight(self) -> float:
-        return {"ELEVEE": 1.0, "MOYENNE": 0.7, "FAIBLE": 0.4}[self.value]
+    FAIBLE = "FAIBLE"      # repose sur une hypothèse ou une valeur illisible
+    # Les poids numériques sont définis dans config/scoring.yaml (source unique).
 
 
 class ExplanationSource(str, Enum):
@@ -80,13 +77,18 @@ class Evidence:
 
 @dataclass
 class HypothesisResult:
-    """Résultat d'une hypothèse du moteur d'hypothèses (déterministe)."""
+    """Résultat d'une hypothèse du moteur d'hypothèses (déterministe).
+
+    Une hypothèse enrichit un verdict (cause probable, priorité) ; elle ne le
+    modifie jamais.
+    """
 
     hypothesis_id: str
     description: str
     verified: bool
     evidence_ids: tuple[str, ...] = ()
     systemic: bool = False
+    support: float | None = None   # part de la population qui confirme l'hypothèse
 
 
 @dataclass
@@ -117,6 +119,8 @@ class Finding:
 
     criticality: int | None = None
     priority: float | None = None
+    priority_breakdown: str | None = None
+    probable_cause: str | None = None
     explanation: str | None = None
     explanation_source: ExplanationSource | None = None
 
@@ -175,6 +179,8 @@ class Finding:
             "confidence": self.confidence.value,
             "criticality": self.criticality,
             "priority": self.priority,
+            "priority_breakdown": self.priority_breakdown or "",
+            "probable_cause": self.probable_cause or "",
             "justification": self.justification,
             "hypotheses": " | ".join(
                 f"{h.hypothesis_id}{'*' if h.systemic else ''}" for h in self.hypotheses if h.verified

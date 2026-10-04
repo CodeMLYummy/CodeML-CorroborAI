@@ -6,7 +6,8 @@ from pathlib import Path
 
 from corroborai.cli import main
 from corroborai.rules_config import load_rules
-from corroborai.rules_doc import rules_markdown
+from corroborai.analysis import load_hypotheses, load_scoring
+from corroborai.rules_doc import documentation_markdown, rules_markdown
 from tests._helpers import DATA_DIR, REPO, requires_data
 
 
@@ -21,9 +22,17 @@ class TestRulesDoc(unittest.TestCase):
         for iid in self.cfg.interpretations:
             self.assertIn(f"### {iid}", self.md)
 
+    def test_hypotheses_documented(self):
+        hcfg = load_hypotheses()
+        doc = documentation_markdown(self.cfg, hcfg, load_scoring(hypotheses=hcfg))
+        for hid in hcfg.hypotheses:
+            self.assertIn(f"`{hid}`", doc)
+
     def test_committed_doc_is_up_to_date(self):
+        hcfg = load_hypotheses()
+        full = documentation_markdown(self.cfg, hcfg, load_scoring(hypotheses=hcfg))
         committed = (REPO / "docs" / "REGLES.md").read_text(encoding="utf-8")
-        self.assertEqual(committed, self.md,
+        self.assertEqual(committed, full,
                          "docs/REGLES.md est périmé : relancer « corroborai rules --markdown -o docs/REGLES.md »")
 
 

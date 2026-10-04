@@ -44,9 +44,31 @@ corroborai rules --markdown -o docs/REGLES.md   # régénère la documentation d
 | Interprétations | taux d'accord avec la cible de chaque interprétation, par champ, et justification des choix |
 | Intégrité | empreintes SHA-256 avant et après traitement |
 
+Les feuilles **Motifs** (permutations, écarts systémiques, motifs récurrents) et
+**Règles candidates** (sources alternatives confirmées sur toute la population,
+à valider par l'expert) donnent une vue d'ensemble pour l'investigation.
+
 Chaque verdict est produit par une règle déterministe (`REGLE_DETERMINISTE`).
 Un champ dont le verdict changerait sous une interprétation alternative voit
 sa confiance abaissée à `MOYENNE` et le verdict alternatif est tracé.
+
+## Analyse des écarts (niveau 3, déterministe)
+
+Une différence entre les deux systèmes peut s'expliquer sans être justifiée par
+le mapping. Le **moteur d'hypothèses** (`config/hypotheses.yaml`) teste, pour
+chaque anomalie, un catalogue fermé d'explications génériques : permutation
+entre deux employés, valeur d'un autre enregistrement de l'historique du poste,
+autre colonne source confirmée sur toute la population, interprétation
+alternative, recodage systématique, écart systémique, type d'affectation absent.
+Il s'agit d'un raisonnement abductif symbolique : reproductible, sans
+apprentissage ni appel externe, et qui **ne modifie jamais un verdict** (un
+test vérifie que les verdicts sont identiques avec et sans analyse).
+
+Le **score de priorité** (`config/scoring.yaml`) combine la criticité du champ,
+la confiance du verdict et des modificateurs liés aux hypothèses vérifiées ;
+son calcul est publié avec chaque verdict. Les erreurs isolées et certaines
+(permutation, affectation absente) passent devant les artefacts systémiques
+(anonymisation des courriels et des libellés d'emploi), à traiter une seule fois.
 
 ## Règles métier
 
@@ -80,6 +102,8 @@ d'altération travaillent sur une copie temporaire, jamais sur les originaux.
 ```
 config/datasets.yaml        registre des fichiers d'entrée et colonnes requises
 config/rules.yaml           mapping codifié (règles, interprétations, criticités)
+config/hypotheses.yaml      catalogue d'hypothèses et seuils
+config/scoring.yaml         formule et modificateurs de priorité
 docs/REGLES.md              documentation des règles (générée)
 src/corroborai/models.py    modèle Finding / Verdict / Evidence
 src/corroborai/io/          chargement en lecture seule, intégrité, normalisation
@@ -88,6 +112,7 @@ src/corroborai/rules_doc.py      génération de docs/REGLES.md
 src/corroborai/matching.py       appariement des affectations
 src/corroborai/rules/            règles déterministes (dates, situation, courriel…)
 src/corroborai/engine.py         moteur de corroboration
+src/corroborai/analysis/         moteur d'hypothèses et score de priorité
 src/corroborai/report/           rapport Excel + CSV
 src/corroborai/cli.py       interface en ligne de commande
 tests/
@@ -98,7 +123,7 @@ tests/
 - [x] Étape 1 — squelette, modèle de données, chargement + intégrité, normalisation
 - [x] Étape 2 — règles codifiées (`config/rules.yaml`)
 - [x] Étape 3 — appariement des affectations, moteur de règles, rapport Excel
-- [ ] Étape 4 — détection de motifs, moteur d'hypothèses, scoring
+- [x] Étape 4 — détection de motifs, moteur d'hypothèses, scoring
 - [ ] Étape 5 — harnais LLM (gabarit · Gemini · compatible OpenAI)
 - [ ] Étape 6 — interface Streamlit, rétroaction experte
 - [ ] Étape 7 — documentation, notebook de démo

@@ -9,7 +9,7 @@ from pathlib import Path
 from corroborai import __version__
 from corroborai.io.loaders import DataLoadError, load_bundle
 from corroborai.rules_config import RulesConfigError, load_rules, validate_against_data
-from corroborai.rules_doc import rules_markdown
+from corroborai.rules_doc import documentation_markdown
 
 
 def _cmd_check(args: argparse.Namespace) -> int:
@@ -52,7 +52,10 @@ def _cmd_rules(args: argparse.Namespace) -> int:
         print(f"ERREUR : {exc}", file=sys.stderr)
         return 2
     if args.markdown:
-        text = rules_markdown(cfg)
+        from corroborai.analysis import load_hypotheses, load_scoring
+
+        hcfg = load_hypotheses()
+        text = documentation_markdown(cfg, hcfg, load_scoring(hypotheses=hcfg))
         if args.output:
             args.output.parent.mkdir(parents=True, exist_ok=True)
             args.output.write_text(text, encoding="utf-8")

@@ -36,8 +36,13 @@ class TestReport(unittest.TestCase):
         cls.tmp.cleanup()
 
     def test_sheets(self):
-        self.assertEqual(self.wb.sheetnames, ["Synthèse", "À investiguer", "Écarts justifiés", "Conformes",
-                                              "Détail", "Affectations", "Interprétations", "Intégrité"])
+        self.assertEqual(self.wb.sheetnames, ["Synthèse", "À investiguer", "Motifs", "Règles candidates",
+                                              "Écarts justifiés", "Conformes", "Détail", "Affectations",
+                                              "Interprétations", "Intégrité"])
+
+    def test_analysis_sheets(self):
+        self.assertEqual(self.wb["Motifs"].max_row - 1, len(self.result.analysis.patterns))
+        self.assertEqual(self.wb["Règles candidates"].max_row - 1, len(self.result.analysis.candidate_rules))
 
     def test_row_counts_match_verdicts(self):
         c = self.result.counts()
@@ -47,13 +52,14 @@ class TestReport(unittest.TestCase):
         self.assertEqual(self.wb["Détail"].max_row - 1, len(self.result.findings))
         self.assertEqual(self.wb["Affectations"].max_row - 1, len(self.result.pairs))
 
-    def test_investigate_sheet_sorted_by_criticality(self):
+    def test_investigate_sheet_sorted_by_priority(self):
         ws = self.wb["À investiguer"]
         headers = [c.value for c in ws[1]]
-        col = headers.index("Criticité")
-        crit = [row[col] for row in ws.iter_rows(min_row=2, values_only=True)]
-        self.assertEqual(crit, sorted(crit, reverse=True))
-        self.assertIn("Justification", headers)
+        self.assertEqual(headers[0], "Priorité")
+        prio = [row[0] for row in ws.iter_rows(min_row=2, values_only=True)]
+        self.assertEqual(prio, sorted(prio, reverse=True))
+        for h in ("Justification", "Cause probable", "Calcul de la priorité"):
+            self.assertIn(h, headers)
 
     def test_detail_columns_for_formulas(self):
         ws = self.wb["Détail"]

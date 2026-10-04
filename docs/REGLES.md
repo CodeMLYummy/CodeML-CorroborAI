@@ -191,3 +191,48 @@ Colonnes cibles hors mapping (non corroborées) :
 - `termStartDate` : Non mappé ; identique à assignmentStartDate dans l'extraction.
 - `siteId` : Non mappé ; identique à siteCode dans l'extraction.
 - `activityStatus` : Non mappé ; la situation est corroborée via detailedStatus.
+
+## Moteur d'hypothèses (analyse déterministe des écarts)
+
+Pour chaque verdict ANOMALIE ou INDETERMINE, un catalogue fermé d'hypothèses génériques est testé (`config/hypotheses.yaml`). Une hypothèse vérifiée ajoute des preuves, une cause probable et un modificateur de priorité ; elle ne modifie jamais le verdict.
+
+| Ordre | Hypothèse | Libellé | Modificateur de priorité | Justification du modificateur |
+|:-:|---|---|:-:|---|
+| 1 | `H-PERMUTATION` | Permutation entre deux employés | ×1.2 | Erreur isolée et certaine, la contrepartie est identifiée. |
+| 2 | `H-HISTORY-RECORD` | Valeur d'un autre enregistrement de l'historique du poste | ×1 | Erreur de calcul localisée ; le motif peut être récurrent. |
+| 3 | `H-ALT-SOURCE` | Valeur provenant d'une autre colonne | ×0.7 | Écart de mapping probable plutôt qu'erreur de donnée ; à valider une fois pour le champ. |
+| 4 | `H-ALT-INTERPRETATION` | Conforme sous une interprétation alternative | ×0.6 | Dépend de la lecture de la règle ; à trancher avec l'équipe fonctionnelle. |
+| 5 | `H-BIJECTION` | Transformation systématique cohérente | ×0.8 | Recodage systématique ; une seule cause pour tous les enregistrements. |
+| 6 | `H-SYSTEMIC` | Écart systémique | ×0.3 | Cause globale ; à traiter une fois pour le champ, pas enregistrement par enregistrement. |
+| 7 | `H-TYPE-ABSENT` | Type d'affectation absent du système cible | ×1 | Type d'affectation non transmis ; impact direct sur la planification. |
+
+### Description des hypothèses
+
+- **`H-PERMUTATION`** — La valeur cible de l'employé A est la valeur attendue de l'employé B, et réciproquement, pour le même champ. Typique d'une inversion d'enregistrements lors du chargement.
+- **`H-HISTORY-RECORD`** — La date cible correspond à la date d'effet d'un autre enregistrement de l'historique du détail du poste (ex. le plus récent) : la règle de calcul a probablement été appliquée sur le mauvais enregistrement.
+- **`H-ALT-SOURCE`** — La valeur cible est égale à une autre colonne (source, détail du poste, motif) que celle prévue au mapping, et cette correspondance est confirmée sur l'ensemble de la population du champ.
+- **`H-ALT-INTERPRETATION`** — La valeur cible est conforme si la règle est lue selon une interprétation alternative documentée.
+- **`H-BIJECTION`** — Les écarts du champ suivent une correspondance un-pour-un stable entre valeur attendue et valeur cible sur toute la population (même valeur attendue → même valeur cible). Typique d'un recodage ou d'une anonymisation appliqués à un seul des deux systèmes.
+- **`H-SYSTEMIC`** — La grande majorité des enregistrements présentent le même type d'écart pour ce champ : cause globale probable (chargement, environnement, anonymisation) plutôt qu'erreur de saisie individuelle.
+- **`H-TYPE-ABSENT`** — Aucune affectation de ce type n'existe dans le système cible pour aucun employé : le type n'est probablement pas transmis par l'interface.
+
+### Seuils
+
+- Écart systémique : au moins 5 enregistrements et 80% du champ.
+- Bijection : au moins 5 écarts, correspondance un-pour-un, et une valeur attendue partagée par des employés différents (sinon la bijection est triviale).
+- Source alternative : concordance sur au moins 90% d'une population d'au moins 5 enregistrements, supérieure à celle de la règle actuelle, et au moins une anomalie expliquée. La colonne devient une règle candidate.
+
+## Score de priorité
+
+priorité = 100 × (criticité / 5) × poids de confiance × base du verdict × produit des modificateurs, plafonnée à 100.
+
+| Confiance | Poids |
+|---|:-:|
+| ELEVEE | 1 |
+| MOYENNE | 0.7 |
+| FAIBLE | 0.4 |
+
+| Verdict | Base |
+|---|:-:|
+| ANOMALIE | 1 |
+| INDETERMINE | 0.6 |

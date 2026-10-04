@@ -58,16 +58,27 @@ COLUMNS: list[tuple[str, str, int, bool]] = [
     ("Colonnes source", "source_fields", 26, True),
     ("Preuves", "evidence", 34, True),
     ("Source de décision", "decision_source", 20, False),
-    ("Hypothèses", "hypotheses", 20, True),
+    ("Priorité", "priority", 9, False),
+    ("Cause probable", "probable_cause", 60, True),
+    ("Hypothèses vérifiées", "hypotheses", 22, True),
+    ("Calcul de la priorité", "priority_breakdown", 44, True),
     ("Explication", "explanation", 50, True),
     ("Source explication", "explanation_source", 14, False),
 ]
-VIEW_COLUMNS = [c for c in COLUMNS if c[1] not in ("finding_id", "decision_source", "hypotheses",
-                                                   "explanation", "explanation_source")]
+_BY_KEY = {c[1]: c for c in COLUMNS}
+INVESTIGATE_COLUMNS = [_BY_KEY[k] for k in (
+    "priority", "person_id", "assignment_key", "target_field", "verdict", "subcategory",
+    "source_raw", "expected", "target_raw", "probable_cause", "justification", "criticality",
+    "confidence", "priority_breakdown", "hypotheses", "rule_id", "rule_ref", "evidence", "rule_params")]
+VIEW_COLUMNS = [_BY_KEY[k] for k in (
+    "person_id", "assignment_key", "target_field", "verdict", "subcategory", "criticality",
+    "confidence", "source_raw", "expected", "target_raw", "justification", "rule_id", "rule_ref",
+    "rule_params", "source_fields", "evidence")]
 
 
 def _sort_key(f: Finding) -> tuple:
-    return (-(f.criticality or 0), CONF_ORDER[f.confidence], f.person_id, f.assignment_key, f.target_field)
+    return (-(f.priority if f.priority is not None else -1), -(f.criticality or 0), CONF_ORDER[f.confidence],
+            f.person_id, f.assignment_key, f.target_field)
 
 
 def _style_header(ws: Worksheet, row: int, ncols: int) -> None:
@@ -94,7 +105,7 @@ def _write_table(ws: Worksheet, columns: list[tuple[str, str, int, bool]],
             if verdict_key and key == verdict_key and cell.value in VERDICT_FILLS:
                 cell.fill = VERDICT_FILLS[cell.value]
                 cell.font = Font(name=FONT, size=10, bold=True)
-    ws.freeze_panes = "B2" if columns and columns[0][1] in ("finding_id", "person_id") else "A2"
+    ws.freeze_panes = "B2" if columns and columns[0][1] in ("finding_id", "person_id", "priority") else "A2"
     if records:
         ws.auto_filter.ref = f"A1:{get_column_letter(len(columns))}{len(records) + 1}"
 
@@ -136,6 +147,21 @@ def _synthesis(ws: Worksheet, result: CorroborationResult, n_detail: int) -> Non
     r = _kv(ws, r, "Intégrité après traitement",
             "OK — fichiers sources inchangés" if result.integrity_after.ok else "ÉCHEC", bold=True)
     r = _kv(ws, r, "Erreurs d'évaluation", len(result.errors))
+    if result.analysis:
+        r = _kv(ws, r, "Motifs détectés", len(result.analysis.patterns))
+        r = _kv(ws, r, "Règles candidates", len(result.analysis.candidate_rules))
+        top = [f for f in sorted(result.findings, key=_sort_key) if f.priority is not None][:5]
+        r += 1
+        r = _title(ws, r, "Priorités les plus élevées")
+        for f in top:
+            ws.cell(row=r, column=1, value=f"{f.priority:g} — {f.person_id} · {f.target_field}").font = Font(
+                name=FONT, bold=True)
+            ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=5)
+            c = ws.cell(row=r, column=2, value=f.probable_cause or f.justification)
+            c.font = Font(name=FONT, size=10)
+            c.alignment = Alignment(wrap_text=True, vertical="top")
+            ws.row_dimensions[r].height = 42
+            r += 1
 
     r += 1
     r = _title(ws, r, "Décompte des verdicts")
@@ -196,6 +222,42 @@ PAIR_COLUMNS = [
 ]
 
 
+PATTERN_COLUMNS = [
+    ("Hypothèse", "hypothesis_id", 20, False), ("Libellé", "label", 34, True),
+    ("Champ", "field", 22, False), ("Verdicts concernés", "count", 12, False),
+    ("Description", "description", 90, True), ("Identifiants", "ids", 50, True),
+]
+CANDIDATE_COLUMNS = [
+    ("Champ cible", "field", 22, False), ("Colonne candidate", "column", 50, True),
+    ("Concordance", "support", 12, False), ("Population", "population", 11, False),
+    ("Règle actuelle", "mapped_support", 13, False), ("Anomalies expliquées", "n", 12, False),
+    ("Description", "description", 80, True), ("Statut", "status", 22, False),
+]
+
+
+def _pattern_records(result: CorroborationResult) -> list[dict[str, Any]]:
+    if not result.analysis:
+        return []
+    labels = {}
+    try:
+        from corroborai.analysis import load_hypotheses
+        labels = {k: v.label for k, v in load_hypotheses().hypotheses.items()}
+    except Exception:  # noqa: BLE001 — libellés facultatifs dans le rapport
+        pass
+    return [{"hypothesis_id": p.hypothesis_id, "label": labels.get(p.hypothesis_id, ""),
+             "field": p.target_field, "count": p.count, "description": p.description,
+             "ids": ", ".join(p.finding_ids)} for p in result.analysis.patterns]
+
+
+def _candidate_records(result: CorroborationResult) -> list[dict[str, Any]]:
+    if not result.analysis:
+        return []
+    return [{"field": c.target_field, "column": c.column, "support": round(c.support, 4),
+             "population": c.population, "mapped_support": round(c.mapped_support, 4),
+             "n": len(c.explains), "description": c.description,
+             "status": "À valider par l'expert"} for c in result.analysis.candidate_rules]
+
+
 def _interpretations(ws: Worksheet, result: CorroborationResult) -> None:
     cols = [("Interprétation", "interpretation", 22, False), ("Champ", "field", 20, False),
             ("Choix", "choice", 22, False), ("Actif", "active", 8, False),
@@ -233,7 +295,10 @@ def write_report(result: CorroborationResult, path: str | Path) -> Path:
     ws = wb.active
     ws.title = "Synthèse"
     sheets: list[tuple[str, Callable[[Worksheet], None]]] = [
-        ("À investiguer", lambda w: _write_table(w, VIEW_COLUMNS, by("ANOMALIE", "INDETERMINE"))),
+        ("À investiguer", lambda w: _write_table(w, INVESTIGATE_COLUMNS, by("ANOMALIE", "INDETERMINE"))),
+        ("Motifs", lambda w: _write_table(w, PATTERN_COLUMNS, _pattern_records(result), verdict_key=None)),
+        ("Règles candidates", lambda w: _write_table(w, CANDIDATE_COLUMNS, _candidate_records(result),
+                                                     verdict_key=None)),
         ("Écarts justifiés", lambda w: _write_table(w, VIEW_COLUMNS, by("JUSTIFIE"))),
         ("Conformes", lambda w: _write_table(w, VIEW_COLUMNS, by("CONFORME"))),
         ("Détail", lambda w: _write_table(w, COLUMNS, records)),
@@ -248,6 +313,10 @@ def write_report(result: CorroborationResult, path: str | Path) -> Path:
     ]
     for title, writer in sheets:
         writer(wb.create_sheet(title))
+    for name, cols in (("Règles candidates", ("C", "E")),):
+        for col in cols:
+            for cell in wb[name][col][1:]:
+                cell.number_format = "0%"
     _synthesis(ws, result, len(records))
     wb.save(path)
     return path

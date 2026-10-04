@@ -1,0 +1,43 @@
+# =============================================================================
+# CorroborAI — Score de priorité des écarts à investiguer
+# =============================================================================
+# priorité = 100 × (criticité / 5) × poids_confiance × base_verdict × Π modificateurs
+# plafonnée à 100. Seuls ANOMALIE et INDETERMINE reçoivent une priorité.
+# Le détail du calcul est publié avec chaque verdict.
+# =============================================================================
+
+version: 1
+scale: 100
+
+verdict_base:
+  ANOMALIE: 1.0
+  INDETERMINE: 0.6      # incertitude : à examiner, mais après les anomalies avérées
+
+confidence_weights:
+  ELEVEE: 1.0
+  MOYENNE: 0.7
+  FAIBLE: 0.4
+
+# Appliqués quand l'hypothèse est vérifiée (multiplicatifs)
+modifiers:
+  H-PERMUTATION:
+    factor: 1.2
+    reason: Erreur isolée et certaine, la contrepartie est identifiée.
+  H-HISTORY-RECORD:
+    factor: 1.0
+    reason: Erreur de calcul localisée ; le motif peut être récurrent.
+  H-ALT-SOURCE:
+    factor: 0.7
+    reason: Écart de mapping probable plutôt qu'erreur de donnée ; à valider une fois pour le champ.
+  H-ALT-INTERPRETATION:
+    factor: 0.6
+    reason: Dépend de la lecture de la règle ; à trancher avec l'équipe fonctionnelle.
+  H-BIJECTION:
+    factor: 0.8
+    reason: Recodage systématique ; une seule cause pour tous les enregistrements.
+  H-SYSTEMIC:
+    factor: 0.3
+    reason: Cause globale ; à traiter une fois pour le champ, pas enregistrement par enregistrement.
+  H-TYPE-ABSENT:
+    factor: 1.0
+    reason: Type d'affectation non transmis ; impact direct sur la planification.
